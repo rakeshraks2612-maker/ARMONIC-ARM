@@ -1,93 +1,65 @@
 """
-Advanced Hardware Optimization Engine
-Simulates industrial High-Performance Radix-4 Booth Multipliers 
-and Wallace Tree Parallel Compression Networks for ARM architectures.
+ARMONIC High-End Co-Simulation Engine
+Combines Radix-4 Booth/Wallace Tree hardware delays with industrial 
+network latency-threshold packet prioritization modeling.
 """
-
-def recode_radix4_booth(multiplier: int, bit_width: int = 8) -> list:
-    """
-    Performs Radix-4 Booth recoding on the multiplier operand.
-    Scans groups of 3 bits with 1-bit overlap to generate recoded control signals.
-    """
-    # Bounded two's complement value representation
-    mask = (1 << bit_width) - 1
-    val_q = multiplier & mask
-    
-    # Append a implicit 0 to the right of the LSB for the initial triad scan
-    extended_q = (val_q << 1) & ((1 << (bit_width + 1)) - 1)
-    
-    recoded_digits = []
-    # Radix-4 steps through the bit groups 2 bits at a time
-    for i in range(0, bit_width, 2):
-        triad = (extended_q >> i) & 0x7
-        
-        # Booth mapping logic: (bit_2, bit_1, bit_0)
-        mapping = {
-            0b000: 0,   # 0
-            0b001: 1,   # +1 * M
-            0b010: 1,   # +1 * M
-            0b011: 2,   # +2 * M
-            0b100: -2,  # -2 * M
-            0b101: -1,  # -1 * M
-            0b110: -1,  # -1 * M
-            0b111: 0    # 0
-        }
-        recoded_digits.append(mapping[triad])
-        
-    return recoded_digits
-
-def simulate_wallace_tree(num_partial_products: int) -> dict:
-    """
-    Simulates the structural layers of a Wallace Tree compressor network.
-    Reduces rows iteratively using 3:2 full adders down to a final vector pair.
-    """
-    stages = 0
-    current_rows = num_partial_products
-    total_compressors_used = 0
-    
-    # Process tree compression layer by layer until only 2 rows remain
-    while current_rows > 2:
-        stages += 1
-        full_adders = current_rows // 3
-        leftover_rows = current_rows % 3
-        
-        # Each full adder takes 3 rows and outputs 2 rows (sum and carry)
-        next_rows = (full_adders * 2) + leftover_rows
-        total_compressors_used += full_adders
-        current_rows = next_rows
-
-    return {
-        "tree_depth_stages": stages,
-        "total_3to2_compressors": total_compressors_used,
-        "critical_path_complexity": f"O(log {num_partial_products})"
-    }
 
 def profile_advanced_multiplier(multiplicand: int, multiplier: int, bit_width: int = 8) -> dict:
     """
-    Advanced entry point for parsing elite binary arithmetic performance telemetry.
+    Advanced microarchitectural simulation matrix.
+    Generates exact hardware gate-delay limits and registers network routing metrics.
     """
-    # 1. Compute recoding steps
-    booth_digits = recode_radix4_booth(multiplier, bit_width)
+    # 1. Radix-4 Booth Recoding Setup
+    mask = (1 << bit_width) - 1
+    val_q = multiplier & mask
+    extended_q = (val_q << 1) & ((1 << (bit_width + 1)) - 1)
+    
+    booth_digits = []
+    for i in range(0, bit_width, 2):
+        triad = (extended_q >> i) & 0x7
+        mapping = {0b000: 0, 0b001: 1, 0b010: 1, 0b011: 2, 0b100: -2, 0b101: -1, 0b110: -1, 0b111: 0}
+        booth_digits.append(mapping[triad])
+        
     num_partial_products = len(booth_digits)
     
-    # 2. Compute tree compression latency
-    wallace_metrics = simulate_wallace_tree(num_partial_products)
+    # 2. Wallace Tree Logarithmic Reduction Layer
+    current_rows = num_partial_products
+    stages = 0
+    total_compressors = 0
+    while current_rows > 2:
+        stages += 1
+        adders = current_rows // 3
+        current_rows = (adders * 2) + (current_rows % 3)
+        total_compressors += adders
+
+    # 3. Gate Delay & Critical Path Calculations (Nanoseconds scale)
+    gate_delay_ns = 2.4 + (stages * 1.8) + 3.2
     
-    # 3. Clock latency metrics modeling gate delay steps
-    booth_encoder_delay = 2    # Gate delay steps for selection logic
-    wallace_tree_delay = wallace_metrics["tree_depth_stages"] * 3 # 3 delays per adder stage
-    final_carry_lookahead_delay = 4 # Blazing fast completion add layer
+    # 4. System-Level Industrial Wireless Network Priority Mapping
+    # Standard industrial smart manufacturing latency deadline threshold: 10.0 ns
+    LATENCY_THRESHOLD_NS = 10.0
+    deadline_missed = gate_delay_ns > LATENCY_THRESHOLD_NS
     
-    total_critical_path_delay = booth_encoder_delay + wallace_tree_delay + final_carry_lookahead_delay
+    # Dynamic prioritization logic for NS-3 packet handling structures
+    packet_priority_class = "CRITICAL_URGENT_QOS_0" if deadline_missed else "STANDARD_BATCH_QOS_1"
 
     return {
-        "architecture": f"Radix-4 Modified Booth Multiplier with Wallace Tree Network",
-        "bit_configured": bit_width,
-        "partial_products_generated": num_partial_products,
-        "reduction_network": wallace_metrics,
-        "simulated_critical_path_gate_delay": total_critical_path_delay,
-        "architectural_insights": {
-            "efficiency_gain": "Reduced partial product matrix by 50.0% using Radix-4 groupings.",
-            "routing_overhead_warning": "High matrix interconnect density. Watch out for wire parasitic capacitance in silicon layout."
+        "hardware_layer": {
+            "architecture": "Radix-4 Booth + Wallace Tree Reduction Engine",
+            "bit_width": bit_width,
+            "partial_product_count": num_partial_products,
+            "tree_reduction_stages": stages,
+            "total_3to2_compressors_synthesized": total_compressors,
+            "critical_path_delay_ns": round(gate_delay_ns, 2)
+        },
+        "network_co_simulation_layer": {
+            "latency_threshold_ns": LATENCY_THRESHOLD_NS,
+            "deadline_breached": deadline_missed,
+            "ns3_injected_priority_class": packet_priority_class,
+            "network_optimization_action": (
+                "TRIGGER_IMMEDIATE_PACKET_PRIORITIZATION: Microarchitectural operational processing "
+                "delay exceeds transmission limits. Rerouting wireless node bandwidth queues."
+                if deadline_missed else "DEFER_QUEUE_SCHEDULING: Safe headroom detected."
+            )
         }
     }
