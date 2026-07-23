@@ -24,7 +24,6 @@ if __name__ == "__main__":
     import visualizer
     import interleaving_engine
     
-    # Passing local inline data arrays directly to visualizer functions
     local_inst = [
         {'mnemonic': 'MUL', 'dest': 'W0', 'src1': 'W1', 'src2': 'W2'},
         {'mnemonic': 'ADD', 'dest': 'W3', 'src1': 'W0', 'src2': 'W4'},
