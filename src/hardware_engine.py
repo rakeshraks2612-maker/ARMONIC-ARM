@@ -1,45 +1,45 @@
 """
-Unified Hardware Definition Model for ARMONIC-ARM.
-Acts as the single source of truth for cycle latencies and instruction mapping.
+ARMONIC-ARM: Hardware Engine Layer.
+Exposes microarchitectural latency profiling interfaces synchronized with the global hardware model.
 """
 
-def get_instruction_metadata(opcode):
-    """
-    Maps an assembly opcode to its target execution port and cycle latency.
-    Ensures all parts of the engine simulate the exact same processor behavior.
-    """
-    op = opcode.upper().strip()
-    
-    # Port 1: Vector / NEON Multipliers (High Latency)
-    if op in ["MUL", "SMULL", "DUP", "SMLAL"]:
-        return "PORT_1_NEON", 3
-        
-    # Port 2: Memory Operations (Loads)
-    elif op in ["LDR", "LDUR", "LDP"]:
-        return "PORT_2_LOAD", 4
-        
-    # Port 3: Memory Operations (Stores)
-    elif op in ["STR", "STUR", "STP"]:
-        return "PORT_3_STORE", 1
-        
-    # Port 0: Default Scalar ALU Operations (Fast Execution)
-    else:
-        return "PORT_0_ALU", 1
+from hardware_model import get_instruction_metadata, calculate_synthesis_metrics
 
+class ARMPipelineSimulator:
+    def __init__(self):
+        self.name = "Armonic Pipeline Engine Core"
 
-def calculate_synthesis_metrics(bit_width=32, total_stalls=0):
+    def analyze_hazards_and_stalls(self, parsed_instructions):
+        """
+        Calculates pipeline execution stalls for an incoming instruction trace.
+        Guarantees exact parity with the core scheduler logic.
+        """
+        stalls = []
+        current_cycle = 0
+        last_port_usage = {}
+        
+        for idx, inst in enumerate(parsed_instructions):
+            # Fallback for raw string tokens or dictionary objects
+            mnemonic = inst if isinstance(inst, str) else inst.get('mnemonic', 'UNKNOWN')
+            
+            # Query the single source of truth configuration
+            port, latency = get_instruction_metadata(mnemonic)
+            
+            if port in last_port_usage and current_cycle < last_port_usage[port]:
+                stall_cycles = last_port_usage[port] - current_cycle
+                stalls.append((idx, stall_cycles))
+                current_cycle += stall_cycles
+                
+            last_port_usage[port] = current_cycle + latency
+            current_cycle += 1
+            
+        return {
+            "stalls": stalls,
+            "total_stalls": len(stalls)
+        }
+
+def profile_advanced_multiplier(bit_width=32, total_stalls=0):
     """
-    Calculates performance and area metrics based on the simulation results.
-    Unified formula to ensure identical dashboard telemetry output.
+    Exposes unified critical-path data endpoints to external clients.
     """
-    # Mathematical latency formula derived from the structural stall matrix
-    critical_latency_ns = 3.6 + (3 * 1.5) + (total_stalls * 0.5)
-    
-    # Hardware gate area evaluation based on multiplier bit width
-    silicon_area_gates = (bit_width / 3) * 95 + (bit_width * 24)
-    
-    return {
-        "topology": "High-Radix Radix-8 + Dadda",
-        "latency_ns": round(critical_latency_ns, 2),
-        "area_gates": int(silicon_area_gates)
-    }
+    return calculate_synthesis_metrics(bit_width, total_stalls)
