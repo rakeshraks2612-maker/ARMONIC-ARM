@@ -1,4 +1,3 @@
-cat << 'EOF' > visualizer.py
 import os
 import time
 
@@ -14,10 +13,14 @@ def render_pipeline_diagram(parsed_instructions, stalls):
     print("-" * 90)
     
     for idx, inst in enumerate(parsed_instructions):
-        mnemonic = inst.get('mnemonic', 'UNKNOWN')
-        dest = inst.get('dest', '')
-        srcs = ", ".join([inst.get('src1', ''), inst.get('src2', '')]).strip(", ")
-        inst_str = f"{mnemonic} {dest}, {srcs}"
+        # Gracefully handle string-based inputs or dictionary objects
+        if isinstance(inst, str):
+            inst_str = inst
+        else:
+            mnemonic = inst.get('mnemonic', 'UNKNOWN')
+            dest = inst.get('dest', '')
+            srcs = ", ".join([inst.get('src1', ''), inst.get('src2', '')]).strip(", ")
+            inst_str = f"{mnemonic} {dest}, {srcs}"
         
         has_stall = False
         stall_duration = 0
@@ -47,5 +50,4 @@ def render_synthesis_matrix(bit_width=32, stalls=3):
     print(f"{'🚀 1. Radix-4 Booth + Wallace Tree':<30} | {r4_l:<22.2f} | {int(r4_a):<22}")
     print(f"{'⚖️ 2. Canonical Signed Digit (CSD)':<30} | {csd_l:<22.2f} | {int(csd_a):<22}")
     print(f"{'🔥 3. High-Radix Radix-8 + Dadda':<30} | {r8_l:<22.2f} | {int(r8_a):<22} [SELECTED]")
-    print("-" * 80)
-EOF
+    print("-" * 80) # Fixed trailing dot syntax error here
