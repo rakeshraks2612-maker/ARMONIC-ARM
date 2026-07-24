@@ -1,45 +1,38 @@
 """
-ARMONIC-ARM: Hardware Engine Layer.
-Exposes microarchitectural latency profiling interfaces synchronized with the global hardware model.
+ARMONIC-ARM: Hardware Model Ground Truth.
+Defines execution port mappings, instruction latencies, and silicon area estimation formulas.
 """
 
-from hardware_model import get_instruction_metadata, calculate_synthesis_metrics
+# Core latency matrix matching Arm64 microarchitecture behaviors
+INSTRUCTION_LATENCY_TABLE = {
+    "MUL": ("PORT_0_ALU", 3),
+    "ADD": ("PORT_0_ALU", 1),
+    "SUB": ("PORT_0_ALU", 1),
+    "LDR": ("PORT_2_LOAD", 2),
+    "STR": ("PORT_3_STORE", 2),
+    "FADD": ("PORT_1_NEON", 4),
+    "FMUL": ("PORT_1_NEON", 5)
+}
 
-class ARMPipelineSimulator:
-    def __init__(self):
-        self.name = "Armonic Pipeline Engine Core"
+def get_instruction_metadata(mnemonic):
+    """Returns the associated execution port and latency cycles for a given mnemonic."""
+    return INSTRUCTION_LATENCY_TABLE.get(mnemonic.upper(), ("PORT_0_ALU", 1))
 
-    def analyze_hazards_and_stalls(self, parsed_instructions):
-        """
-        Calculates pipeline execution stalls for an incoming instruction trace.
-        Guarantees exact parity with the core scheduler logic.
-        """
-        stalls = []
-        current_cycle = 0
-        last_port_usage = {}
-        
-        for idx, inst in enumerate(parsed_instructions):
-            # Fallback for raw string tokens or dictionary objects
-            mnemonic = inst if isinstance(inst, str) else inst.get('mnemonic', 'UNKNOWN')
-            
-            # Query the single source of truth configuration
-            port, latency = get_instruction_metadata(mnemonic)
-            
-            if port in last_port_usage and current_cycle < last_port_usage[port]:
-                stall_cycles = last_port_usage[port] - current_cycle
-                stalls.append((idx, stall_cycles))
-                current_cycle += stall_cycles
-                
-            last_port_usage[port] = current_cycle + latency
-            current_cycle += 1
-            
-        return {
-            "stalls": stalls,
-            "total_stalls": len(stalls)
-        }
-
-def profile_advanced_multiplier(bit_width=32, total_stalls=0):
+def calculate_synthesis_metrics(bit_width=32, total_stalls=0):
     """
-    Exposes unified critical-path data endpoints to external clients.
+    Computes mathematical critical path delays and area footprints.
+    Eliminates faked or static dashboard strings.
     """
-    return calculate_synthesis_metrics(bit_width, total_stalls)
+    base_gate_equivalent = bit_width * 45
+    stall_penalty_area = total_stalls * 12.5
+    total_estimated_gates = base_gate_equivalent + stall_penalty_area
+    
+    base_latency_ns = 1.25 if bit_width == 32 else 2.50
+    stall_delay_ns = total_stalls * 0.3125
+    final_latency_ns = round(base_latency_ns + stall_delay_ns, 4)
+    
+    return {
+        "gate_count": total_estimated_gates,
+        "latency_ns": final_latency_ns,
+        "efficiency_index": round((1.0 / (final_latency_ns * total_estimated_gates)) * 100000, 2)
+    }
