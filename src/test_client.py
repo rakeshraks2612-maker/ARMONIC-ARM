@@ -93,7 +93,7 @@ class ArmMicroarchitectureEngine:
             if any(op in mnemonic for op in ["MUL", "SMULL", "UMULL", "DUP", "SVE"]):
                 if self.clock_cycle <= self.port_neon:
                     structural_stall = self.port_neon - self.clock_cycle + 1
-                self.port_neon = self.clock_cycle + structural_stall + LATENCY_MIN = LATENCY_MUL
+                self.port_neon = self.clock_cycle + structural_stall + LATENCY_MUL
                 self.register_scoreboard[dest] = self.clock_cycle + structural_stall + LATENCY_MUL
                 
             # Route to Load Pipeline
