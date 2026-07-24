@@ -70,7 +70,7 @@ Weights (`w1..w5`) are configurable per workload — see [Configuration](#config
 
 1. **Clone and enter the project:**
    ```bash
-   git clone <your-repo-url> armonic-arm
+   git clone <https://github.com/rakeshraks2612-maker/ARMONIC-ARM> armonic-arm
    cd armonic-arm
    ```
 
