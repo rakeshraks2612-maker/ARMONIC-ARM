@@ -1,0 +1,18 @@
+# Secrets
+*.pem
+*.key
+.env
+config.yaml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Results
+results/
+
+# macOS
+.DS_Store
