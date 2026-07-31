@@ -1,0 +1,19 @@
+pipeline:
+  target_workload: "workloads/ai_inference.py"
+  output_dir: "results/"
+
+scoring_weights:
+  w1_cycles: 0.40
+  w2_memory: 0.25
+  w3_latency: 0.20
+  w4_instructions: 0.10
+  w5_power: 0.05
+
+llm:
+  provider: "google"
+  model: "gemini-3.6-flash"
+  api_key: "GEMINI_API_KEY"
+
+mcp_server:
+  host: "http://127.0.0.1"
+  port: 8080

@@ -1,0 +1,6 @@
+torch
+torchvision
+pyyaml
+GitPython
+google-genai
+requests

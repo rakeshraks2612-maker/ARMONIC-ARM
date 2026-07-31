@@ -1,0 +1,81 @@
+"""
+ARMONIC-ARM: Performance Monitoring Wrapper (EC2 / real Arm Performix).
+Drives the real `apx` CLI against a workload using the code_hotspots recipe.
+
+Fixed from the previous version, which called a non-existent `apx trace`
+subcommand with a `--counters=...` flag that doesn't exist either. The real
+CLI only supports `apx recipe run <name> --workload "<cmd>" --json`.
+"""
+import json
+import subprocess
+
+
+class ApxProfilingError(Exception):
+    pass
+
+
+def run_apx_profiler(workload_path, recipe="code_hotspots", timeout=120):
+    """
+    Runs the given workload under Arm Performix's code_hotspots recipe
+    and returns the parsed JSON result.
+
+    workload_path: path to the python script to profile (e.g. "workloads/ai_inference.py")
+    """
+    workload_command = f"python3 {workload_path}"
+
+    apx_command = [
+        "apx", "recipe", "run", recipe,
+        "--workload", workload_command,
+        "--json",
+    ]
+
+    try:
+        result = subprocess.run(
+            apx_command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        raise ApxProfilingError(
+            "'apx' binary not found on PATH. Confirm Performix is installed "
+            "(`which apx`) before calling this function."
+        )
+    except subprocess.TimeoutExpired:
+        raise ApxProfilingError(
+            f"apx recipe run timed out after {timeout}s profiling {workload_path}."
+        )
+
+    if result.returncode != 0:
+        # Surface the REAL error instead of guessing at a cause.
+        raise ApxProfilingError(
+            f"apx exited with code {result.returncode}.\n"
+            f"--- stdout ---\n{result.stdout}\n"
+            f"--- stderr ---\n{result.stderr}"
+        )
+
+    raw_stdout = result.stdout.strip()
+    if not raw_stdout:
+        raise ApxProfilingError(
+            "apx returned exit code 0 but produced no stdout. "
+            "Check `apx recipe run --help` for output routing options -- "
+            "some recipes may write results to a file/run ID instead of stdout."
+        )
+
+    try:
+        parsed = json.loads(raw_stdout)
+    except json.JSONDecodeError as e:
+        raise ApxProfilingError(
+            f"Failed to parse apx output as JSON: {e}\n"
+            f"Raw output was:\n{raw_stdout[:2000]}"
+        )
+
+    return parsed, raw_stdout
+
+
+def save_to_disk(filename, content, is_json=False):
+    with open(filename, "w") as f:
+        if is_json:
+            json.dump(content, f, indent=2)
+        else:
+            f.write(content)
