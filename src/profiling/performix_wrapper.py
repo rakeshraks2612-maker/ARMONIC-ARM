@@ -1,20 +1,7 @@
 """
-ARMONIC-ARM: Performance Monitoring Wrapper (EC2 / real Arm Performix).
-
-Full real pipeline, confirmed by hand against actual apx output:
-  1. `apx recipe run code_hotspots --workload "..." --deploy-tools --json`
-     streams NDJSON progress events (code_hotspots depends on the `neoprof`
-     tool, which must be deployed with --deploy-tools or every run silently
-     produces empty results with no error).
-  2. `apx run export <run_id> <dir>` produces a .zip of the full run.
-  3. Inside the zip: <hash>/tool/neoprof/0/output/functions-capture-
-     periodic_sampling.csv -- a real per-function sample-count table,
-     aggregated across every loaded binary. Columns:
-     "Periodic Samples","uid","image","symbol","inlined from"
-  4. Since neoprof samples at a fixed frequency for the run's duration,
-     SUM(Periodic Samples) is a real, legitimate proxy for total execution
-     time. Lower total = genuinely faster. This is the real bottleneck
-     signal -- not a guessed field name.
+ARMONIC-ARM: Performance Monitoring Wrapper.
+Tries real Arm Performix (APX) first. Falls back to cProfile + time.perf_counter
+for development/demo on macOS and non-Linux environments.
 """
 import csv
 import json
@@ -22,12 +9,84 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import zipfile
+import cProfile
+import pstats
+import io
 
 
 class ApxProfilingError(Exception):
     pass
 
+
+# ============================================================================
+# FALLBACK PROFILER (for macOS / non-Linux / APX-unavailable environments)
+# ============================================================================
+
+def _fallback_profile(workload_path):
+    """
+    Uses Python's built-in cProfile + time.perf_counter to generate
+    APX-compatible metrics when real APX is unavailable.
+    """
+    print("[!] APX not found — using cProfile fallback profiler.")
+
+    profiler = cProfile.Profile()
+    start = time.perf_counter()
+
+    # Run the workload under profiler
+    profiler.enable()
+    try:
+        exec(open(workload_path).read(), {"__name__": "__main__"})
+    except SystemExit:
+        pass  # workloads may call sys.exit()
+    profiler.disable()
+
+    elapsed = time.perf_counter() - start
+
+    # Parse stats
+    stream = io.StringIO()
+    stats = pstats.Stats(profiler, stream=stream)
+    stats.sort_stats("cumulative")
+    stats.print_stats()
+
+    # Extract per-function data
+    raw_stats = stats.stats  # dict: (file, line, func) -> (cc, nc, tt, ct, callers)
+    functions = []
+    total_samples = 0
+
+    for (file, line, func), (cc, nc, tt, ct, callers) in raw_stats.items():
+        # Convert cumulative time to "samples" proxy
+        # Higher cumulative time = more samples
+        sample_proxy = int(ct * 1000)  # scale to integer
+        if sample_proxy > 0:
+            functions.append({
+                "symbol": func,
+                "image": os.path.basename(file) if file else "unknown",
+                "samples": sample_proxy,
+            })
+            total_samples += sample_proxy
+
+    functions.sort(key=lambda x: x["samples"], reverse=True)
+    top = functions[0] if functions else None
+
+    return {
+        "total_samples": total_samples or int(elapsed * 1000),
+        "top_function": top["symbol"] if top else None,
+        "top_function_image": top["image"] if top else None,
+        "top_function_samples": top["samples"] if top else 0,
+        "top_function_pct": round(100 * top["samples"] / total_samples, 2)
+        if top and total_samples else 0.0,
+        "function_count": len(functions),
+        "functions": functions[:10],
+        "profiler": "cProfile_fallback",
+        "elapsed_sec": round(elapsed, 4),
+    }
+
+
+# ============================================================================
+# REAL APX PROFILER (Linux / cloud Arm64 only)
+# ============================================================================
 
 def _run_apx_command(command, timeout):
     try:
@@ -58,12 +117,12 @@ def _parse_ndjson_stream(raw_stdout):
 
 def _launch_recipe(workload_command, recipe, timeout):
     launch_cmd = [
-    "apx", "recipe", "run", recipe,
-    "--workload", workload_command,
-    "--deploy-tools",
-    "--timeout", "30",
-    "--json",
-]
+        "apx", "recipe", "run", recipe,
+        "--workload", workload_command,
+        "--deploy-tools",
+        "--timeout", "30",
+        "--json",
+    ]
     result = _run_apx_command(launch_cmd, timeout)
 
     if result.returncode != 0:
@@ -92,12 +151,9 @@ def _launch_recipe(workload_command, recipe, timeout):
     if not run_id:
         raise ApxProfilingError(f"Could not find run_id in apx event stream: {events}")
     if not completed:
-        last_stage = (events[-1].get("data") or {}).get("stage", "<unknown>")
+        last_stage = (events[-1].get("data") or {}).get("stage", "")
         raise ApxProfilingError(f"Stream ended without 'Recipe completed'. Last stage: {last_stage}")
 
-    # Surface a real run-level failure even if the stream looked fine
-    # (e.g. the neoprof-not-deployed case, which reports success at the
-    # orchestration level but failure at the recipe stage).
     info_cmd = ["apx", "run", "info", run_id, "--json"]
     info_result = _run_apx_command(info_cmd, timeout)
     if info_result.returncode == 0:
@@ -111,7 +167,7 @@ def _launch_recipe(workload_command, recipe, timeout):
                     f"run_error={run_error!r}"
                 )
         except json.JSONDecodeError:
-            pass  # non-fatal, export step below will surface real problems
+            pass
 
     return run_id
 
@@ -136,8 +192,6 @@ def _export_and_parse(run_id, timeout):
         with zipfile.ZipFile(zip_path) as zf:
             zf.extractall(tmp_extract)
 
-        # Find the un-suffixed aggregated functions CSV specifically --
-        # NOT the per-image variants (functions-capture-...-libc.so.6.csv etc)
         target_name = "functions-capture-periodic_sampling.csv"
         csv_path = None
         for root, _, files in os.walk(tmp_extract):
@@ -162,8 +216,8 @@ def _export_and_parse(run_id, timeout):
                     continue
                 total_samples += samples
                 functions.append({
-                    "symbol": row.get("symbol", "<unknown>"),
-                    "image": row.get("image", "<unknown>"),
+                    "symbol": row.get("symbol", ""),
+                    "image": row.get("image", ""),
                     "samples": samples,
                 })
 
@@ -176,29 +230,40 @@ def _export_and_parse(run_id, timeout):
             "top_function_image": top["image"] if top else None,
             "top_function_samples": top["samples"] if top else 0,
             "top_function_pct": round(100 * top["samples"] / total_samples, 2)
-                                 if top and total_samples else 0.0,
+            if top and total_samples else 0.0,
             "function_count": len(functions),
-            "functions": functions[:10],  # top 10 for reporting; full list omitted to keep JSON small
+            "functions": functions[:10],
+            "profiler": "apx",
         }
     finally:
         shutil.rmtree(tmp_export, ignore_errors=True)
         shutil.rmtree(tmp_extract, ignore_errors=True)
 
 
+# ============================================================================
+# UNIFIED ENTRY POINT
+# ============================================================================
+
 def run_apx_profiler(workload_path, recipe="code_hotspots", timeout=300):
     """
-    Full pipeline: launch -> wait for completion -> export -> parse real
-    per-function sample data.
+    Tries real APX first. If apx is not installed (e.g. macOS), falls back
+    to cProfile + time.perf_counter automatically.
 
-    Returns: (metrics_dict, run_id)
-      metrics_dict contains: total_samples (proxy for execution time --
-      LOWER IS BETTER), top_function, top_function_pct, function_count,
-      functions (top 10 by sample count).
+    Returns: (metrics_dict, run_id_or_tag)
+    metrics_dict contains: total_samples, top_function, top_function_pct,
+    function_count, functions (top 10), profiler (apx|cProfile_fallback)
     """
-    workload_command = f"python3 {workload_path}"
-    run_id = _launch_recipe(workload_command, recipe, timeout)
-    metrics = _export_and_parse(run_id, timeout)
-    return metrics, run_id
+    # Check if apx exists
+    apx_exists = shutil.which("apx") is not None
+
+    if apx_exists:
+        workload_command = f"python3 {workload_path}"
+        run_id = _launch_recipe(workload_command, recipe, timeout)
+        metrics = _export_and_parse(run_id, timeout)
+        return metrics, run_id
+    else:
+        metrics = _fallback_profile(workload_path)
+        return metrics, "fallback"
 
 
 def save_to_disk(filename, content, is_json=False):
