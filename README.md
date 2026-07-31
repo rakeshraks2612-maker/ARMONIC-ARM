@@ -61,8 +61,7 @@ Weights (`w1..w5`) are configurable per workload — see [Configuration](#config
 - Python 3.10+ and/or your workload's native toolchain (C++ build tools if
   profiling native code)
 - Git, with push access to the repo Armonic will branch from
-- An Anthropic API key (or your configured LLM provider) for the Refactoring
-  Engine
+- - A Google Gemini API key (set as `GEMINI_API_KEY` environment variable) for refactor engine 
 
 ---
 
@@ -168,4 +167,4 @@ validation (profile → refactor → reprofile) on sample agentic workloads.
 
 ## License
 
-TBD.
+MIT License — see [LICENSE](./LICENSE) for details.
