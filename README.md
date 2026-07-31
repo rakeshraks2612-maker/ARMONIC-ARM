@@ -61,7 +61,7 @@ Weights (`w1..w5`) are configurable per workload — see [Configuration](#config
 - Python 3.10+ and/or your workload's native toolchain (C++ build tools if
   profiling native code)
 - Git, with push access to the repo Armonic will branch from
-- - A Google Gemini API key (set as `GEMINI_API_KEY` environment variable) for refactor engine 
+- A Google Gemini API key (set as `GEMINI_API_KEY` environment variable) for refactor engine 
 
 ---
 
