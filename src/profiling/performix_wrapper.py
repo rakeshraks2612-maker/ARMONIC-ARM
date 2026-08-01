@@ -1,7 +1,7 @@
 """
 ARMONIC-ARM: Performance Monitoring Wrapper.
-Tries real Arm Performix (APX) first. Falls back to cProfile + time.perf_counter
-for development/demo on macOS and non-Linux environments.
+Tries Arm Performix (APX) first. Falls back to cProfile on macOS/Windows
+or when apx is not installed.
 """
 import csv
 import json
@@ -9,84 +9,19 @@ import os
 import shutil
 import subprocess
 import tempfile
-import time
 import zipfile
-import cProfile
-import pstats
-import io
+
+from src.profiling.fallback_profiler import run_fallback_profiler
 
 
 class ApxProfilingError(Exception):
     pass
 
 
-# ============================================================================
-# FALLBACK PROFILER (for macOS / non-Linux / APX-unavailable environments)
-# ============================================================================
+def _apx_available():
+    """Check if apx binary exists on PATH."""
+    return shutil.which("apx") is not None
 
-def _fallback_profile(workload_path):
-    """
-    Uses Python's built-in cProfile + time.perf_counter to generate
-    APX-compatible metrics when real APX is unavailable.
-    """
-    print("[!] APX not found — using cProfile fallback profiler.")
-
-    profiler = cProfile.Profile()
-    start = time.perf_counter()
-
-    # Run the workload under profiler
-    profiler.enable()
-    try:
-        exec(open(workload_path).read(), {"__name__": "__main__"})
-    except SystemExit:
-        pass  # workloads may call sys.exit()
-    profiler.disable()
-
-    elapsed = time.perf_counter() - start
-
-    # Parse stats
-    stream = io.StringIO()
-    stats = pstats.Stats(profiler, stream=stream)
-    stats.sort_stats("cumulative")
-    stats.print_stats()
-
-    # Extract per-function data
-    raw_stats = stats.stats  # dict: (file, line, func) -> (cc, nc, tt, ct, callers)
-    functions = []
-    total_samples = 0
-
-    for (file, line, func), (cc, nc, tt, ct, callers) in raw_stats.items():
-        # Convert cumulative time to "samples" proxy
-        # Higher cumulative time = more samples
-        sample_proxy = int(ct * 1000)  # scale to integer
-        if sample_proxy > 0:
-            functions.append({
-                "symbol": func,
-                "image": os.path.basename(file) if file else "unknown",
-                "samples": sample_proxy,
-            })
-            total_samples += sample_proxy
-
-    functions.sort(key=lambda x: x["samples"], reverse=True)
-    top = functions[0] if functions else None
-
-    return {
-        "total_samples": total_samples or int(elapsed * 1000),
-        "top_function": top["symbol"] if top else None,
-        "top_function_image": top["image"] if top else None,
-        "top_function_samples": top["samples"] if top else 0,
-        "top_function_pct": round(100 * top["samples"] / total_samples, 2)
-        if top and total_samples else 0.0,
-        "function_count": len(functions),
-        "functions": functions[:10],
-        "profiler": "cProfile_fallback",
-        "elapsed_sec": round(elapsed, 4),
-    }
-
-
-# ============================================================================
-# REAL APX PROFILER (Linux / cloud Arm64 only)
-# ============================================================================
 
 def _run_apx_command(command, timeout):
     try:
@@ -233,37 +168,28 @@ def _export_and_parse(run_id, timeout):
             if top and total_samples else 0.0,
             "function_count": len(functions),
             "functions": functions[:10],
-            "profiler": "apx",
+            "_profiler": "apx",
         }
     finally:
         shutil.rmtree(tmp_export, ignore_errors=True)
         shutil.rmtree(tmp_extract, ignore_errors=True)
 
 
-# ============================================================================
-# UNIFIED ENTRY POINT
-# ============================================================================
-
 def run_apx_profiler(workload_path, recipe="code_hotspots", timeout=300):
     """
-    Tries real APX first. If apx is not installed (e.g. macOS), falls back
-    to cProfile + time.perf_counter automatically.
-
-    Returns: (metrics_dict, run_id_or_tag)
-    metrics_dict contains: total_samples, top_function, top_function_pct,
-    function_count, functions (top 10), profiler (apx|cProfile_fallback)
+    Unified profiler entry point.
+    Uses APX on Linux/Arm64 systems where it's installed.
+    Falls back to cProfile on macOS, Windows, or when apx is missing.
     """
-    # Check if apx exists
-    apx_exists = shutil.which("apx") is not None
+    if not _apx_available():
+        print("[!] APX not detected on this system.")
+        return run_fallback_profiler(workload_path, timeout)
 
-    if apx_exists:
-        workload_command = f"python3 {workload_path}"
-        run_id = _launch_recipe(workload_command, recipe, timeout)
-        metrics = _export_and_parse(run_id, timeout)
-        return metrics, run_id
-    else:
-        metrics = _fallback_profile(workload_path)
-        return metrics, "fallback"
+    print("[+] APX detected. Using Arm Performix for profiling.")
+    workload_command = f"python3 {workload_path}"
+    run_id = _launch_recipe(workload_command, recipe, timeout)
+    metrics = _export_and_parse(run_id, timeout)
+    return metrics, run_id
 
 
 def save_to_disk(filename, content, is_json=False):
