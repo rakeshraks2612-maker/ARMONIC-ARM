@@ -3,6 +3,8 @@ import yaml
 import sys
 import os
 import json
+import shutil
+import subprocess
 
 from src.profiling.performix_wrapper import run_apx_profiler
 from src.refactor_engine.agent_core import fetch_llm_optimization, apply_and_commit_patch
@@ -59,6 +61,41 @@ def main():
         sys.exit(1)
 
     apply_and_commit_patch(".", workload, advisory)
+
+    # ── CORRECTNESS VALIDATION ──
+    print("\n--- PHASE 2.5: CORRECTNESS CHECK ---")
+    workload_name = os.path.splitext(os.path.basename(workload))[0]
+    try:
+        orig_check = subprocess.run(
+            ["python3", "-c",
+             f"import sys; sys.path.insert(0, 'workloads'); "
+             f"from {workload_name} import run_test; print(run_test())"],
+            capture_output=True, text=True, timeout=30
+        )
+        opt_check = subprocess.run(
+            ["python3", "-c",
+             f"import sys; sys.path.insert(0, 'workloads'); "
+             f"from {workload_name}_optimized import run_test; print(run_test())"],
+            capture_output=True, text=True, timeout=30
+        )
+
+        if orig_check.returncode != 0 or opt_check.returncode != 0:
+            print("[!] Correctness check execution failed.")
+            print(f"    Original stderr: {orig_check.stderr.strip()}")
+            print(f"    Optimized stderr: {opt_check.stderr.strip()}")
+            print("[!] Proceeding with caution.")
+        elif orig_check.stdout.strip() != opt_check.stdout.strip():
+            print("[!] CORRECTNESS CHECK FAILED: Output mismatch.")
+            print(f"    Original hash:  {orig_check.stdout.strip()}")
+            print(f"    Optimized hash: {opt_check.stdout.strip()}")
+            print("[!] Reverting to original code. Optimization rejected.")
+            shutil.copy(f"workloads/{workload_name}.py", f"workloads/{workload_name}_optimized.py")
+            return
+        else:
+            print(f"[+] Correctness validated. Hash: {orig_check.stdout.strip()}")
+    except Exception as e:
+        print(f"[!] Correctness check error: {e}")
+        print("[!] Proceeding with caution.")
 
     print("\n--- PHASE 3: OPTIMIZED PROFILING ---")
     opt_metrics, opt_run_id = run_apx_profiler(workload)

@@ -22,3 +22,14 @@ def run_workload():
 
 if __name__ == "__main__":
     run_workload()
+def run_test():
+    """Deterministic correctness check. Returns hash of computation result."""
+    import hashlib
+    # Small deterministic computation (fast, same seed)
+    np.random.seed(42)
+    size = 10
+    a = np.random.rand(size, size)
+    b = np.random.rand(size, size)
+    res = np.dot(a, b)
+    res = np.sin(res) + np.cos(res)
+    return hashlib.md5(res.tobytes()).hexdigest()[:16]
