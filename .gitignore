@@ -42,6 +42,9 @@ Thumbs.db
 
 # Project secrets & outputs
 config.yaml
+.env
+*.pem
+*.key
 results/
 *.bak
 *.png
