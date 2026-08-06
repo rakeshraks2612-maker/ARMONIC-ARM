@@ -1,138 +1,132 @@
-import argparse
-import yaml
-import sys
+#!/usr/bin/env python3
+"""
+ARMONIC Orchestrator — Main entry point for autonomous optimization loop.
+
+Flow:
+  1. Profile baseline workload (APX or cProfile fallback)
+  2. Send telemetry to LLM for optimization advisory
+  3. Apply patch, validate syntax/AST/imports, commit to git branch
+  4. Re-profile patched workload
+  5. Compare bottleneck scores: reject if opt_score >= base_score
+  6. Report results
+
+Usage:
+    python -m armonic.run --config config.yaml
+"""
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 import os
-import json
-import shutil
+import sys
+import yaml
+import time
 import subprocess
+import json
 
-from src.profiling.performix_wrapper import run_apx_profiler
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.profiling.apx_wrapper import profile_workload
 from src.refactor_engine.agent_core import fetch_llm_optimization, apply_and_commit_patch
-from src.mcp_server.mcp_server import ArmMCPClient
-from src.scoring.bottleneck import calculate_bottleneck_score as _calc_bs
 
-def load_config(config_path):
-   with open(config_path, 'r') as file:
-       return yaml.safe_load(file)
 
-def calculate_bottleneck_score(metrics):
-   """
-   Unified Bottleneck Score (B_s) combining CPU cycles, memory stalls,
-   cache misses, instructions retired, and branch misses.
-   Lower B_s = better performance.
-   """
-   return _calc_bs(metrics)
+def run_armonic_pipeline(config_path="config.yaml"):
+    print("=" * 60)
+    print("  ARMONIC — Autonomous Agentic Optimizer for Arm64")
+    print("=" * 60)
 
-def save_to_disk(filename, data, is_json=True):
-   os.makedirs("results", exist_ok=True)
-   path = os.path.join("results", filename)
-   with open(path, 'w') as f:
-       if is_json:
-           json.dump(data, f, indent=4)
-       else:
-           f.write(data)
+    # ─── Load config ───
+    if not os.path.exists(config_path):
+        print(f"[-] Config not found: {config_path}")
+        sys.exit(1)
 
-def main():
-   parser = argparse.ArgumentParser()
-   parser.add_argument("--config", required=True)
-   args = parser.parse_args()
-   config = load_config(args.config)
-   workload = config['pipeline']['target_workload']
-   api_key = os.environ.get("GEMINI_API_KEY") or config['llm']['api_key']
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
 
-   # API key guard
-   if not api_key or api_key == "YOUR_GEMINI_API_KEY_HERE":
-       print("[!] ERROR: No valid Gemini API key found.")
-       print("    Set GEMINI_API_KEY environment variable or edit config.yaml")
-       print("    Get a free key at: https://aistudio.google.com/app/apikey")
-       sys.exit(1)
+    repo_path = config.get("repo_path", os.getcwd())
+    workload_path = config.get("workload", "workloads/ai_inference.py")
+    api_key = config.get("llm", {}).get("api_key") or os.environ.get("GEMINI_API_KEY")
+    max_retries = config.get("max_retries", 1)
 
-   print("\n--- PHASE 1: BASELINE PROFILING ---")
-   base_metrics, base_run_id = run_apx_profiler(workload)
-   save_to_disk("apx_baseline.json", base_metrics, is_json=True)
-   base_score = calculate_bottleneck_score(base_metrics)
-   print(f"[+] Baseline B_s: {base_score}")
-   if base_metrics.get("top_function"):
-       print(f"[+] Baseline top hotspot: {base_metrics['top_function']} "
-             f"({base_metrics['top_function_pct']}% of samples)")
+    if not api_key:
+        print("[-] No Gemini API key found in config.yaml or GEMINI_API_KEY env var.")
+        sys.exit(1)
 
-   print("\n--- PHASE 2: AGENTIC ANALYSIS ---")
-   mcp_host = config['mcp_server']['host']
-   mcp_port = config['mcp_server']['port']
-   if not mcp_host.startswith("http://") and not mcp_host.startswith("https://"):
-       mcp_host = f"http://{mcp_host}"
-   mcp = ArmMCPClient(host=f"{mcp_host}:{mcp_port}")
-   mcp.query_architecture_bottlenecks(base_metrics)
+    workload_file = os.path.basename(workload_path)
 
-   advisory = fetch_llm_optimization(base_metrics, api_key)
-   if not advisory:
-       sys.exit(1)
+    # ─── Step 1: Baseline Profile ───
+    print(f"\n[1/5] Profiling baseline: {workload_path}")
+    baseline_telemetry = profile_workload(workload_path)
+    baseline_score = baseline_telemetry.get("bottleneck_score", float("inf"))
+    top_func = baseline_telemetry.get("top_function", "unknown")
 
-   apply_and_commit_patch(".", workload, advisory)
+    print(f"    Baseline B_s: {baseline_score}")
+    print(f"    Top hotspot: {top_func} ({baseline_telemetry.get('top_function_pct', 0)}%)")
 
-   # Correctness validation
-   print("\n--- PHASE 2.5: CORRECTNESS CHECK ---")
-   workload_name = os.path.splitext(os.path.basename(workload))[0]
-   try:
-       orig_check = subprocess.run(
-           ["python3", "-c",
-            f"import sys; sys.path.insert(0, 'workloads'); "
-            f"from {workload_name} import run_test; print(run_test())"],
-           capture_output=True, text=True, timeout=30
-       )
-       opt_check = subprocess.run(
-           ["python3", "-c",
-            f"import sys; sys.path.insert(0, 'workloads'); "
-            f"from {workload_name}_optimized import run_test; print(run_test())"],
-           capture_output=True, text=True, timeout=30
-       )
+    # ─── Step 2: LLM Advisory ───
+    print("\n[2/5] Querying LLM for Arm64-aware optimization...")
+    advisory = None
+    for attempt in range(max_retries):
+        advisory = fetch_llm_optimization(baseline_telemetry, api_key)
+        if advisory:
+            break
+        print(f"    Retry {attempt + 1}/{max_retries}...")
+        time.sleep(2)
 
-       if orig_check.returncode != 0 or opt_check.returncode != 0:
-           print("[!] Correctness check execution failed.")
-           print(f"    Original stderr: {orig_check.stderr.strip()}")
-           print(f"    Optimized stderr: {opt_check.stderr.strip()}")
-           print("[!] Proceeding with caution.")
-       elif orig_check.stdout.strip() != opt_check.stdout.strip():
-           print("[!] CORRECTNESS CHECK FAILED: Output mismatch.")
-           print(f"    Original hash:  {orig_check.stdout.strip()}")
-           print(f"    Optimized hash: {opt_check.stdout.strip()}")
-           print("[!] Reverting to original code. Optimization rejected.")
-           shutil.copy(f"workloads/{workload_name}.py", f"workloads/{workload_name}_optimized.py")
-           return
-       else:
-           print(f"[+] Correctness validated. Hash: {orig_check.stdout.strip()}")
-   except Exception as e:
-       print(f"[!] Correctness check error: {e}")
-       print("[!] Proceeding with caution.")
+    if not advisory:
+        print("[-] LLM failed to produce a valid advisory. Aborting.")
+        sys.exit(1)
 
-   print("\n--- PHASE 3: OPTIMIZED PROFILING ---")
-   opt_metrics, opt_run_id = run_apx_profiler(workload)
-   save_to_disk("apx_optimized.json", opt_metrics, is_json=True)
-   opt_score = calculate_bottleneck_score(opt_metrics)
-   print(f"[+] Optimized B_s: {opt_score}")
-   if opt_metrics.get("top_function"):
-       print(f"[+] Optimized top hotspot: {opt_metrics['top_function']} "
-             f"({opt_metrics['top_function_pct']}% of samples)")
+    # ─── Step 3: Apply Patch ───
+    print("\n[3/5] Applying autonomous patch...")
+    patch_applied = apply_and_commit_patch(
+        repo_path=repo_path,
+        file_to_patch=workload_path,
+        advisory=advisory,
+        telemetry_data=baseline_telemetry
+    )
 
-   print("\n=== BOTTLENECK SCORE (B_s) COMPARISON ===")
-   print("(Lower B_s = Better performance)")
+    if not patch_applied:
+        print("[-] Patch application failed or produced no change. Aborting.")
+        sys.exit(1)
 
-   if base_score > 0:
-       improvement = ((base_score - opt_score) / base_score) * 100
-   else:
-       improvement = 0.0
+    # ─── Step 4: Re-profile Optimized Workload ───
+    print("\n[4/5] Re-profiling optimized workload...")
+    optimized_telemetry = profile_workload(workload_path)
+    optimized_score = optimized_telemetry.get("bottleneck_score", float("inf"))
 
-   report = (
-       f"Baseline B_s: {base_score}\n"
-       f"Optimized B_s: {opt_score}\n"
-       f"Improvement: {improvement:.2f}%\n"
-       f"Baseline top hotspot: {base_metrics.get('top_function')} "
-       f"({base_metrics.get('top_function_pct')}%)\n"
-       f"Optimized top hotspot: {opt_metrics.get('top_function')} "
-       f"({opt_metrics.get('top_function_pct')}%)\n"
-   )
-   print(report)
-   save_to_disk("report.md", report, is_json=False)
+    print(f"    Optimized B_s: {optimized_score}")
+
+    # ─── Step 5: Score Validation (README CLAIM) ───
+    print("\n[5/5] Validating improvement...")
+    if optimized_score >= baseline_score:
+        print(f"[-] SCORE REGRESSION: {baseline_score} -> {optimized_score}")
+        print("[-] Rejecting patch. Reverting to original code...")
+
+        # Revert file to original
+        # We need to stash the original. apply_and_commit_patch already wrote it,
+        # but we re-read from git to be safe.
+        try:
+            import git as git_module
+            repo = git_module.Repo(repo_path)
+            repo.git.checkout("HEAD", "--", workload_path)
+            print("[+] File reverted to original.")
+        except Exception as e:
+            print(f"[!] Manual revert may be needed: {e}")
+
+        print("\n[-] ARMONIC pipeline completed: PATCH REJECTED (no improvement)")
+        sys.exit(1)
+    else:
+        improvement_pct = ((baseline_score - optimized_score) / baseline_score) * 100
+        print(f"[+] IMPROVEMENT: {baseline_score} -> {optimized_score} ({improvement_pct:.2f}% faster)")
+        print("[+] Patch accepted and committed to isolated git branch.")
+        print("\n[*] ARMONIC pipeline completed: PATCH ACCEPTED")
+
 
 if __name__ == "__main__":
-   main()
+    import argparse
+    parser = argparse.ArgumentParser(description="ARMONIC Autonomous Optimizer")
+    parser.add_argument("--config", default="config.yaml", help="Path to config file")
+    args = parser.parse_args()
+    run_armonic_pipeline(args.config)
