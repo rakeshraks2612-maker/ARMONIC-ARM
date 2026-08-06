@@ -9,7 +9,6 @@ import time
 from google import genai
 from google.genai import types
 
-
 def fetch_llm_optimization(telemetry_data, api_key):
     """
     Sends APX telemetry to Gemini. The LLM receives the TOP hotspot
@@ -23,15 +22,25 @@ def fetch_llm_optimization(telemetry_data, api_key):
     client = genai.Client(api_key=api_key)
 
     prompt = f"""
-You are an expert Arm64 performance engineer. Analyze this Arm Performix telemetry:
+You are an expert Arm64 performance engineer specializing in Neoverse microarchitecture optimization. Analyze this Arm Performix telemetry:
 
 TOP HOTSPOT: `{top_func}` ({top_pct}% of total execution time)
 TOTAL SAMPLES: {telemetry_data.get('total_samples')}
 TOP 10 FUNCTIONS BY SAMPLE COUNT:
 {json.dumps(telemetry_data.get('functions', []), indent=2)}
 
-Your task: Suggest a Python code optimization for the TOP HOTSPOT function.
-You may ONLY suggest:
+Your task: Suggest a Python code optimization for the TOP HOTSPOT function that specifically targets Arm64 performance characteristics.
+
+Arm64-Specific Optimization Rules:
+1. When suggesting Numba, ALWAYS include `fastmath=True` to leverage Arm64 NEON SIMD vectorization.
+2. Include `cache=True` to avoid recompilation overhead on Arm64 cloud instances (AWS Graviton, Ampere).
+3. For numerical hotspots, prefer Numba over raw NumPy because Numba compiles to native Arm64 assembly with NEON.
+4. For serialization bottlenecks, suggest `orjson` which uses Arm64-optimized JSON parsing.
+5. For recursive functions, suggest `functools.lru_cache` to exploit Neoverse's large L2 cache hierarchy.
+6. NEVER suggest x86-specific libraries (e.g., Intel MKL, AVX intrinsics).
+7. NEVER change algorithmic logic, control flow, or data structures.
+
+You may ONLY output:
 1. Zero or more import lines to add near the top of the file.
 2. A single decorator line to place directly above the function definition.
 
@@ -41,7 +50,7 @@ Return STRICT JSON:
   "target_function": "{top_func}",
   "imports": ["list", "of", "imports"],
   "decorator": "decorator line or empty string",
-  "reason": "Why this fixes the bottleneck on Arm64"
+  "reason": "Why this fixes the bottleneck specifically on Arm64 Neoverse"
 }}
 """
 
@@ -59,7 +68,6 @@ Return STRICT JSON:
     except Exception as e:
         print(f"[-] LLM failed: {e}")
         return None
-
 
 def _apply_patch_to_source(code, advisory):
     """
@@ -101,7 +109,6 @@ def _apply_patch_to_source(code, advisory):
         new_code = "".join(import_lines)
 
     return new_code
-
 
 def apply_and_commit_patch(repo_path, file_to_patch, advisory):
     print("[+] Applying autonomous patch...")
