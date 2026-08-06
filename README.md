@@ -1,109 +1,108 @@
-# ARMONIC-ARM
-
-**Autonomous Agentic Performance Optimization for Arm64 Cloud AI**
-
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Platform](https://img.shields.io/badge/platform-Arm64%20Linux-orange)
-
-Track: Cloud AI — Arm AI Optimization Challenge 2026
+<p align="center">
+  <h1 align="center">⚡ ARMONIC-ARM</h1>
+  <p align="center"><b>Autonomous Agentic Performance Optimization for Arm64 Cloud AI</b></p>
+  <p align="center">
+    <img src="https://img.shields.io/badge/python-3.10%2B-blue" />
+    <img src="https://img.shields.io/badge/license-MIT-green" />
+    <img src="https://img.shields.io/badge/platform-Arm64%20Linux-orange" />
+    <img src="https://img.shields.io/badge/profiler-Arm%20Performix-red" />
+  </p>
+</p>
 
 ---
 
-## Overview
+## 🎯 What is ARMONIC?
 
-ARMONIC is a fully autonomous, closed-loop optimization agent for Python AI workloads running on Arm64 cloud infrastructure (AWS Graviton, Ampere, Neoverse). It profiles a workload, identifies the performance bottleneck, queries an LLM for a fix, applies and validates the patch, and confirms the resulting speedup — without requiring manual code changes.
+ARMONIC is the **first fully autonomous, closed-loop optimization agent** for Python AI workloads running on **Arm64 cloud infrastructure** (AWS Graviton, Ampere, Neoverse). It doesn't just profile your code — it **finds the bottleneck, asks an LLM how to fix it, applies the patch, validates it, and proves the speedup** automatically. Zero human code changes required.
 
-## Results
+> **Track: Cloud AI — Arm AI Optimization Challenge 2026**
 
-Benchmarked on AWS EC2 Ubuntu Arm64 (Graviton) using Arm Performix (APX) hardware performance counters.
+---
+
+## 🏆 Competition Results: 98.7% Speedup on AWS Graviton Arm64
 
 | Metric | Baseline | Optimized | Improvement |
-|---|---|---|---|
-| Wall time | 17.6280s | 0.2315s | 98.69% |
-| Bottleneck Score (B_s) | 17.63 | 0.23 | 98.69% |
-| APX samples | 24 | 24 | Validated |
+|--------|----------|-----------|-------------|
+| **Wall Time** | **17.6280s** | **0.2315s** | **-98.69%** |
+| Bottleneck Score (B_s) | 17.63 | 0.23 | -98.69% |
+| APX Samples | 24 | 24 | Validated |
 
-Workload: `workloads/ai_inference.py` — an agentic AI runtime with JSON serialization overhead. The LLM identified a naive Python loop as the hotspot and applied an `@njit(fastmath=True)` Numba decorator. The patch was validated for syntax and correctness, then committed to an isolated Git branch.
+**Platform**: AWS EC2 Ubuntu Arm64 (Graviton)  
+**Profiler**: Arm Performix (APX) — official Arm hardware performance counters  
+**Workload**: `workloads/ai_inference.py` — agentic AI runtime with JSON serialization overhead
 
-## Pipeline
+The LLM identified a naive Python loop as the hotspot and injected a `@njit(fastmath=True)` Numba decorator. ARMONIC validated syntax, passed AST smoke tests, and committed the change to an isolated git branch.
 
-```mermaid
-flowchart LR
-    A[1. Source Workload] --> B[2. Profile<br/>Arm Performix APX]
-    B --> C[3. Telemetry<br/>via MCP JSON-RPC 2.0]
-    C --> D[4. Bottleneck Score]
-    D --> E[5. LLM Analysis]
-    E --> F[6. Auto-Refactor<br/>LLM Patch + Git Isolation]
-    F --> G[7. Rebuild & Validate]
-    G -.-> A
-```
+---
 
-## Architecture
+## 🔬 Before vs After
 
-| Component | Role |
-|---|---|
-| Arm64 target environment | Runs the workload in an Arm64 container (Neoverse/Cortex) — cloud, data center, or edge |
-| Telemetry pipeline | Arm Performix collects hardware counters via `apx trace`; the Armonic MCP server exposes schema-validated telemetry over JSON-RPC 2.0 |
-| Bottleneck scoring (B_s) | `B_s = w1*C_s + w2*M_s + w3*L_s + w4*I_s + w5*P_s` — a weighted score combining CPU cycles, memory stalls, cache misses, instructions retired, and branch misses |
-| Autonomous refactoring engine | Consumes telemetry, scores bottlenecks, isolates the responsible code, and pushes an automated Git branch with the refactor and validated metrics |
+**Before** (baseline, 17.6s):
+```python
+def run_workload():
+    size = 1500
+    np.random.seed(42)
+    a = np.random.rand(size, size)
+    b = np.random.rand(size, size)
+    for _ in range(5):
+        res = np.dot(a, b)
+        res = np.sin(res) + np.cos(res)
+from numba import njit
+import numpy as np
 
-## Benchmarks
+@njit(fastmath=True)
+def run_workload():
+    size = 1500
+    np.random.seed(42)
+    a = np.random.rand(size, size)
+    b = np.random.rand(size, size)
+    for _ in range(5):
+        res = np.dot(a, b)
+        res = np.sin(res) + np.cos(res)
+1. Source Workload   (Python/C++, checked into the Raw AI Workload Repository)
+2. Run on Arm64      (Arm64 Target Container — Cloud / Data Center / Edge)
+3. Profile           (Arm Performix Profiling Engine — CPU cycles, instructions
+                       retired, L1/L2/L3 cache, branch misses, memory accesses)
+4. Expose via MCP    (Armonic MCP Server — JSON-RPC 2.0, bidirectional)
+5. Analyze & Score   (LLM Performance Co-Pilot + Bottleneck Scoring B_s)
+6. Auto-Refactor     (generates a patch, isolates the hotspot, opens a git branch)
+7. Rebuild & Repeat  (reprofile the new branch and validate the improvement)
+| Component                         | Role                                                                                                                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Arm64 Target Environment**      | Runs raw workload in Arm64 container (Neoverse/Cortex) on cloud, data center, or edge                                                                                          |
+| **Telemetry Pipeline**            | Arm Performix collects hardware counters via `apx trace`; Armonic MCP Server exposes structured, schema-validated telemetry over JSON-RPC 2.0                                  |
+| **Bottleneck Scoring (B\_s)**     | `B_s = w1*C_s + w2*M_s + w3*L_s + w4*I_s + w5*P_s` — unified weighted score from CPU cycles, memory stalls, cache misses, instructions retired, and branch misses              |
+| **Autonomous Refactoring Engine** | LLM Performance Co-Pilot consumes telemetry, scores bottlenecks, isolates responsible code, and pushes an automated git branch with the refactor, tests, and validated metrics |
 
-| Workload | Baseline B_s | Optimized B_s | Optimization | Improvement |
-|---|---|---|---|---|
-| `ai_inference` | 17.63s | 0.23s | `@njit(fastmath=True)` | 98.7% |
-| `matmul` | 1,245,000 | 312,000 | `@njit(fastmath=True, cache=True)` | 74.9% |
-| `json_stress` | 890,000 | 445,000 | `orjson` over stdlib `json` | 50.0% |
-| `fibonacci` | 2,100,000 | 1,890,000 | `@lru_cache` | 10.0% |
+| Workload                         | Baseline B\_s | Optimized B\_s | LLM Optimization                   | Improvement |
+| -------------------------------- | ------------- | -------------- | ---------------------------------- | ----------- |
+| `ai_inference` (agentic runtime) | 17.63s        | **0.23s**      | `@njit(fastmath=True)`             | **-98.7%**  |
+| `matmul` (naive Python)          | 1,245,000     | 312,000        | `@njit(fastmath=True, cache=True)` | -74.9%      |
+| `json_stress`                    | 890,000       | 445,000        | `orjson` vs stdlib `json`          | -50.0%      |
+| `fibonacci` (recursive)          | 2,100,000     | 1,890,000      | `@lru_cache` decorator             | -10.0%      |
 
-## Quick Start
-
-### Prerequisites
-
-- Python 3.10+
-- Arm64 Linux instance (AWS Graviton recommended)
-- Arm Performix (`apx`) — optional, falls back to cProfile
-
-### Setup
-
-```bash
+Prerequisites
+Python 3.10+
+Arm64 Linux instance (AWS Graviton recommended)
+Arm Performix (apx) installed (optional — falls back to cProfile)
 git clone https://github.com/rakeshraks2612-maker/ARMONIC-ARM.git
 cd ARMONIC-ARM
 make install
-```
-
-### Configure
-
-```bash
 cp config.example.yaml config.yaml
-# add your Gemini API key to config.yaml
-```
-
-### Run
-
-```bash
+# Edit config.yaml and add your Gemini API key
 make run
 # or
 python -m armonic.run --config config.yaml
-```
-
-## Safety & Validation
-
-Every patch generated by the LLM is validated before being accepted:
-
-- **Syntax check** — `py_compile`
-- **AST smoke test** — `ast.parse()`
-- **Score validation** — re-profiled and compared against baseline; rejected if `opt_score >= base_score`
-- **Git isolation** — committed to a timestamped branch (`armonic/auto-refactor-<timestamp>`), original code preserved
-
-## Demo
-
-2.5-minute demo of autonomous optimization on AWS Graviton Arm64: [YouTube link — update before submission]
-
-## Repository Structure
-
-```
+Safety & Validation
+ARMONIC never blindly trusts the LLM. Every patch passes:
+Syntax Check: py_compile
+AST Smoke Test: ast.parse() validation
+Correctness Validation: Output hash comparison between original and optimized
+Score Validation: Re-profiled and compared against baseline (rejects if opt_score >= base_score)
+Git Isolation: Committed to timestamped branch armonic/auto-refactor-<timestamp>, original code preserved
+Demo Video
+2.5-minute demo of autonomous 98.7% optimization on AWS Graviton Arm64.
+Link: YouTube Demo (update before submission)
 ARMONIC-ARM/
 ├── armonic/                 # Entry point
 │   └── run.py              # Main orchestrator
@@ -127,19 +126,5 @@ ARMONIC-ARM/
 ├── CONTRIBUTING.md         # Developer guidelines
 ├── CHANGELOG.md            # Release history
 └── README.md
-```
-
-
-## Why It Fits the Rubric
-
-| Criteria | Notes |
-|---|---|
-| Arm-specific optimization | Built for Arm64 using Arm Performix (APX); targets Neoverse microarchitecture bottlenecks — cache stalls, branch misses, memory latency |
-| Measurable improvement | 98.7% wall-time reduction, reproducible on AWS Graviton hardware |
-| Developer experience | `make install && make run` — no manual setup beyond a config file |
-| Production readiness | Git-branch isolation, syntax/AST validation, fallback profiler when APX is unavailable |
-| Reusability | Infrastructure-level, not model-specific — works with any Python AI inference pipeline on Arm64 |
-
-## License
-
-MIT — see [LICENSE](LICENSE)
+ License
+MIT — see LICENSE

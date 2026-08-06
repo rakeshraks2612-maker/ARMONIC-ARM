@@ -9,123 +9,130 @@ import subprocess
 from src.profiling.performix_wrapper import run_apx_profiler
 from src.refactor_engine.agent_core import fetch_llm_optimization, apply_and_commit_patch
 from src.mcp_server.mcp_server import ArmMCPClient
+from src.scoring.bottleneck import calculate_bottleneck_score as _calc_bs
 
 def load_config(config_path):
-    with open(config_path, 'r') as file:
-        return yaml.safe_load(file)
+   with open(config_path, 'r') as file:
+       return yaml.safe_load(file)
 
 def calculate_bottleneck_score(metrics):
-    """
-    Real score: total sampled hits across all functions during the run.
-    Since neoprof samples at a fixed frequency for the run's duration,
-    this is a genuine proxy for total execution time. LOWER IS BETTER.
-    """
-    return metrics.get("total_samples", 0)
+   """
+   Unified Bottleneck Score (B_s) combining CPU cycles, memory stalls,
+   cache misses, instructions retired, and branch misses.
+   Lower B_s = better performance.
+   """
+   return _calc_bs(metrics)
 
 def save_to_disk(filename, data, is_json=True):
-    os.makedirs("results", exist_ok=True)
-    path = os.path.join("results", filename)
-    with open(path, 'w') as f:
-        if is_json:
-            json.dump(data, f, indent=4)
-        else:
-            f.write(data)
+   os.makedirs("results", exist_ok=True)
+   path = os.path.join("results", filename)
+   with open(path, 'w') as f:
+       if is_json:
+           json.dump(data, f, indent=4)
+       else:
+           f.write(data)
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True)
-    args = parser.parse_args()
-    config = load_config(args.config)
-    workload = config['pipeline']['target_workload']
-    api_key = os.environ.get("GEMINI_API_KEY") or config['llm']['api_key']
+   parser = argparse.ArgumentParser()
+   parser.add_argument("--config", required=True)
+   args = parser.parse_args()
+   config = load_config(args.config)
+   workload = config['pipeline']['target_workload']
+   api_key = os.environ.get("GEMINI_API_KEY") or config['llm']['api_key']
 
-    print("\n--- PHASE 1: BASELINE PROFILING ---")
-    base_metrics, base_run_id = run_apx_profiler(workload)
-    save_to_disk("apx_baseline.json", base_metrics, is_json=True)
-    base_score = calculate_bottleneck_score(base_metrics)
-    print(f"[+] Baseline total samples: {base_score}")
-    if base_metrics.get("top_function"):
-        print(f"[+] Baseline top hotspot: {base_metrics['top_function']} "
-              f"({base_metrics['top_function_pct']}% of samples)")
+   # API key guard
+   if not api_key or api_key == "YOUR_GEMINI_API_KEY_HERE":
+       print("[!] ERROR: No valid Gemini API key found.")
+       print("    Set GEMINI_API_KEY environment variable or edit config.yaml")
+       print("    Get a free key at: https://aistudio.google.com/app/apikey")
+       sys.exit(1)
 
-    print("\n--- PHASE 2: AGENTIC ANALYSIS ---")
-    mcp_host = config['mcp_server']['host']
-    mcp_port = config['mcp_server']['port']
-    if not mcp_host.startswith("http://") and not mcp_host.startswith("https://"):
-        mcp_host = f"http://{mcp_host}"
-    mcp = ArmMCPClient(host=f"{mcp_host}:{mcp_port}")
-    mcp.query_architecture_bottlenecks(base_metrics)
+   print("\n--- PHASE 1: BASELINE PROFILING ---")
+   base_metrics, base_run_id = run_apx_profiler(workload)
+   save_to_disk("apx_baseline.json", base_metrics, is_json=True)
+   base_score = calculate_bottleneck_score(base_metrics)
+   print(f"[+] Baseline B_s: {base_score}")
+   if base_metrics.get("top_function"):
+       print(f"[+] Baseline top hotspot: {base_metrics['top_function']} "
+             f"({base_metrics['top_function_pct']}% of samples)")
 
-    advisory = fetch_llm_optimization(base_metrics, api_key)
-    if not advisory:
-        sys.exit(1)
+   print("\n--- PHASE 2: AGENTIC ANALYSIS ---")
+   mcp_host = config['mcp_server']['host']
+   mcp_port = config['mcp_server']['port']
+   if not mcp_host.startswith("http://") and not mcp_host.startswith("https://"):
+       mcp_host = f"http://{mcp_host}"
+   mcp = ArmMCPClient(host=f"{mcp_host}:{mcp_port}")
+   mcp.query_architecture_bottlenecks(base_metrics)
 
-    apply_and_commit_patch(".", workload, advisory)
+   advisory = fetch_llm_optimization(base_metrics, api_key)
+   if not advisory:
+       sys.exit(1)
 
-    # ── CORRECTNESS VALIDATION ──
-    print("\n--- PHASE 2.5: CORRECTNESS CHECK ---")
-    workload_name = os.path.splitext(os.path.basename(workload))[0]
-    try:
-        orig_check = subprocess.run(
-            ["python3", "-c",
-             f"import sys; sys.path.insert(0, 'workloads'); "
-             f"from {workload_name} import run_test; print(run_test())"],
-            capture_output=True, text=True, timeout=30
-        )
-        opt_check = subprocess.run(
-            ["python3", "-c",
-             f"import sys; sys.path.insert(0, 'workloads'); "
-             f"from {workload_name}_optimized import run_test; print(run_test())"],
-            capture_output=True, text=True, timeout=30
-        )
+   apply_and_commit_patch(".", workload, advisory)
 
-        if orig_check.returncode != 0 or opt_check.returncode != 0:
-            print("[!] Correctness check execution failed.")
-            print(f"    Original stderr: {orig_check.stderr.strip()}")
-            print(f"    Optimized stderr: {opt_check.stderr.strip()}")
-            print("[!] Proceeding with caution.")
-        elif orig_check.stdout.strip() != opt_check.stdout.strip():
-            print("[!] CORRECTNESS CHECK FAILED: Output mismatch.")
-            print(f"    Original hash:  {orig_check.stdout.strip()}")
-            print(f"    Optimized hash: {opt_check.stdout.strip()}")
-            print("[!] Reverting to original code. Optimization rejected.")
-            shutil.copy(f"workloads/{workload_name}.py", f"workloads/{workload_name}_optimized.py")
-            return
-        else:
-            print(f"[+] Correctness validated. Hash: {orig_check.stdout.strip()}")
-    except Exception as e:
-        print(f"[!] Correctness check error: {e}")
-        print("[!] Proceeding with caution.")
+   # Correctness validation
+   print("\n--- PHASE 2.5: CORRECTNESS CHECK ---")
+   workload_name = os.path.splitext(os.path.basename(workload))[0]
+   try:
+       orig_check = subprocess.run(
+           ["python3", "-c",
+            f"import sys; sys.path.insert(0, 'workloads'); "
+            f"from {workload_name} import run_test; print(run_test())"],
+           capture_output=True, text=True, timeout=30
+       )
+       opt_check = subprocess.run(
+           ["python3", "-c",
+            f"import sys; sys.path.insert(0, 'workloads'); "
+            f"from {workload_name}_optimized import run_test; print(run_test())"],
+           capture_output=True, text=True, timeout=30
+       )
 
-    print("\n--- PHASE 3: OPTIMIZED PROFILING ---")
-    opt_metrics, opt_run_id = run_apx_profiler(workload)
-    save_to_disk("apx_optimized.json", opt_metrics, is_json=True)
-    opt_score = calculate_bottleneck_score(opt_metrics)
-    print(f"[+] Optimized total samples: {opt_score}")
-    if opt_metrics.get("top_function"):
-        print(f"[+] Optimized top hotspot: {opt_metrics['top_function']} "
-              f"({opt_metrics['top_function_pct']}% of samples)")
+       if orig_check.returncode != 0 or opt_check.returncode != 0:
+           print("[!] Correctness check execution failed.")
+           print(f"    Original stderr: {orig_check.stderr.strip()}")
+           print(f"    Optimized stderr: {opt_check.stderr.strip()}")
+           print("[!] Proceeding with caution.")
+       elif orig_check.stdout.strip() != opt_check.stdout.strip():
+           print("[!] CORRECTNESS CHECK FAILED: Output mismatch.")
+           print(f"    Original hash:  {orig_check.stdout.strip()}")
+           print(f"    Optimized hash: {opt_check.stdout.strip()}")
+           print("[!] Reverting to original code. Optimization rejected.")
+           shutil.copy(f"workloads/{workload_name}.py", f"workloads/{workload_name}_optimized.py")
+           return
+       else:
+           print(f"[+] Correctness validated. Hash: {orig_check.stdout.strip()}")
+   except Exception as e:
+       print(f"[!] Correctness check error: {e}")
+       print("[!] Proceeding with caution.")
 
-    print("\n=== 📊 BOTTLENECK SCORE (B_s) COMPARISON ===")
-    print("(B_s = total profiler samples across the run -- LOWER IS BETTER, "
-          "it's a real proxy for execution time)")
+   print("\n--- PHASE 3: OPTIMIZED PROFILING ---")
+   opt_metrics, opt_run_id = run_apx_profiler(workload)
+   save_to_disk("apx_optimized.json", opt_metrics, is_json=True)
+   opt_score = calculate_bottleneck_score(opt_metrics)
+   print(f"[+] Optimized B_s: {opt_score}")
+   if opt_metrics.get("top_function"):
+       print(f"[+] Optimized top hotspot: {opt_metrics['top_function']} "
+             f"({opt_metrics['top_function_pct']}% of samples)")
 
-    if base_score > 0:
-        improvement = ((base_score - opt_score) / base_score) * 100
-    else:
-        improvement = 0.0
+   print("\n=== BOTTLENECK SCORE (B_s) COMPARISON ===")
+   print("(Lower B_s = Better performance)")
 
-    report = (
-        f"Baseline B_s (total samples): {base_score}\n"
-        f"Optimized B_s (total samples): {opt_score}\n"
-        f"Improvement: {improvement:.2f}%\n"
-        f"Baseline top hotspot: {base_metrics.get('top_function')} "
-        f"({base_metrics.get('top_function_pct')}%)\n"
-        f"Optimized top hotspot: {opt_metrics.get('top_function')} "
-        f"({opt_metrics.get('top_function_pct')}%)\n"
-    )
-    print(report)
-    save_to_disk("report.md", report, is_json=False)
+   if base_score > 0:
+       improvement = ((base_score - opt_score) / base_score) * 100
+   else:
+       improvement = 0.0
+
+   report = (
+       f"Baseline B_s: {base_score}\n"
+       f"Optimized B_s: {opt_score}\n"
+       f"Improvement: {improvement:.2f}%\n"
+       f"Baseline top hotspot: {base_metrics.get('top_function')} "
+       f"({base_metrics.get('top_function_pct')}%)\n"
+       f"Optimized top hotspot: {opt_metrics.get('top_function')} "
+       f"({opt_metrics.get('top_function_pct')}%)\n"
+   )
+   print(report)
+   save_to_disk("report.md", report, is_json=False)
 
 if __name__ == "__main__":
-    main()
+   main()
