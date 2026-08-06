@@ -2,6 +2,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 import os
+import sys
 import subprocess
 import git
 import json
@@ -9,10 +10,13 @@ import time
 from google import genai
 from google.genai import types
 
+
 def fetch_llm_optimization(telemetry_data, api_key):
     """
     Sends APX telemetry to Gemini. The LLM receives the TOP hotspot
     dynamically extracted from telemetry — NOT hardcoded.
+
+    Returns validated advisory dict or None on failure.
     """
     print("[+] Sending telemetry to Google Gemini...")
 
@@ -63,18 +67,39 @@ Return STRICT JSON:
             )
         )
         advisory = json.loads(response.text)
-        print(f"[+] LLM Advisory: {advisory['action']} targeting `{advisory.get('target_function', top_func)}`")
+
+        # ─── FATAL FIX #2: Validate LLM response structure ───
+        required_keys = ["action", "target_function", "imports", "decorator", "reason"]
+        missing = [k for k in required_keys if k not in advisory]
+        if missing:
+            print(f"[-] LLM response missing keys: {missing}. Raw: {response.text[:200]}")
+            return None
+
+        # Ensure target_function is never empty/None
+        if not advisory.get("target_function"):
+            advisory["target_function"] = top_func
+
+        print(f"[+] LLM Advisory: {advisory['action']} targeting `{advisory.get('target_function')}`")
         return advisory
+
+    except json.JSONDecodeError as e:
+        print(f"[-] LLM returned invalid JSON: {e}")
+        return None
     except Exception as e:
         print(f"[-] LLM failed: {e}")
         return None
 
-def _apply_patch_to_source(code, advisory):
+
+def _apply_patch_to_source(code, advisory, fallback_target="unknown"):
     """
     Dynamically targets whatever function the LLM names,
-    falls back to top_function from telemetry if LLM omits it.
+    falls back to telemetry top_function if LLM omits it.
     """
-    target_function = advisory.get("target_function", "naive_matmul_row")
+    # ─── FATAL FIX #1: No hardcoded fallback ───
+    target_function = advisory.get("target_function") or fallback_target
+    if target_function == "unknown":
+        raise ValueError("No target_function in advisory and no fallback provided.")
+
     anchor = f"def {target_function}("
     lines = code.splitlines(keepends=True)
 
@@ -110,15 +135,27 @@ def _apply_patch_to_source(code, advisory):
 
     return new_code
 
-def apply_and_commit_patch(repo_path, file_to_patch, advisory):
+
+def apply_and_commit_patch(repo_path, file_to_patch, advisory, telemetry_data=None):
+    """
+    Applies patch, validates syntax + AST + imports, then commits to git.
+    If ANY step fails, the original file is restored.
+
+    NOTE: Score validation (re-profile & compare baseline vs optimized) must be
+    handled by the orchestrator (armonic/run.py) AFTER this function returns True.
+    This function only guarantees the patch is syntactically valid and importable.
+    """
     print("[+] Applying autonomous patch...")
 
     target_path = os.path.join(repo_path, file_to_patch)
     with open(target_path, 'r') as f:
         original_code = f.read()
 
+    # ─── FATAL FIX #1 continued: pass fallback from telemetry ───
+    fallback = telemetry_data.get("top_function", "unknown") if telemetry_data else "unknown"
+
     try:
-        new_code = _apply_patch_to_source(original_code, advisory)
+        new_code = _apply_patch_to_source(original_code, advisory, fallback_target=fallback)
     except ValueError as e:
         print(f"[-] Patch anchor not found: {e}")
         return False
@@ -127,11 +164,13 @@ def apply_and_commit_patch(repo_path, file_to_patch, advisory):
         print("[-] Patch produced no change, skipping.")
         return False
 
+    # Write candidate patch
     with open(target_path, 'w') as f:
         f.write(new_code)
 
+    # ─── Validation Layer 1: Syntax ───
     compile_check = subprocess.run(
-        ["python3", "-m", "py_compile", target_path],
+        [sys.executable, "-m", "py_compile", target_path],
         capture_output=True, text=True
     )
     if compile_check.returncode != 0:
@@ -140,16 +179,37 @@ def apply_and_commit_patch(repo_path, file_to_patch, advisory):
             f.write(original_code)
         return False
 
+    # ─── Validation Layer 2: AST ───
     smoke_test = subprocess.run(
-        ["python3", "-c", f"import ast; ast.parse(open('{target_path}').read())"],
+        [sys.executable, "-c", f"import ast; ast.parse(open('{target_path}').read())"],
         capture_output=True, text=True
     )
     if smoke_test.returncode != 0:
-        print(f"[-] Smoke test failed. Reverting.\n{smoke_test.stderr}")
+        print(f"[-] AST smoke test failed. Reverting.\n{smoke_test.stderr}")
         with open(target_path, 'w') as f:
             f.write(original_code)
         return False
 
+    # ─── FATAL FIX #4: Functional import smoke test ───
+    # Verify any new imports are resolvable before committing
+    imports = advisory.get("imports", []) or []
+    for imp in imports:
+        imp_stripped = imp.strip()
+        if not imp_stripped:
+            continue
+        # Test import in isolated subprocess (fast, safe)
+        import_check = subprocess.run(
+            [sys.executable, "-c", imp_stripped],
+            capture_output=True, text=True, timeout=10
+        )
+        if import_check.returncode != 0:
+            print(f"[-] Import resolution failed: '{imp_stripped}'. Reverting.\n{import_check.stderr}")
+            with open(target_path, 'w') as f:
+                f.write(original_code)
+            return False
+    print("[+] All imports resolved successfully.")
+
+    # ─── Validation Layer 3: Git commit with rollback on failure ───
     try:
         repo = git.Repo(repo_path)
         timestamp = int(time.time())
@@ -160,5 +220,8 @@ def apply_and_commit_patch(repo_path, file_to_patch, advisory):
         print(f"[+] Committed to branch: {branch_name}")
         return True
     except Exception as e:
-        print(f"[-] Git failed: {e}")
+        # ─── FATAL FIX #5: Revert on git failure ───
+        print(f"[-] Git failed: {e}. Restoring original file.")
+        with open(target_path, 'w') as f:
+            f.write(original_code)
         return False
