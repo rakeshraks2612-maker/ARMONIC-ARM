@@ -1,6 +1,6 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.generativeai")
-warnings.filterwarnings("ignore", message=".*google.generativeai.*deprecated.*", category=UserWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
 import os
 import subprocess
 import git
