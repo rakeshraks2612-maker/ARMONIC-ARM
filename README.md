@@ -231,11 +231,8 @@ ARMONIC-ARM/
 ├── src/
 │   ├── profiling/          # APX + cProfile wrappers (cross-platform)
 │   ├── refactor_engine/    # LLM agent + patcher + git automation
-│   ├── mcp_server/         # Arm MCP client bridge (JSON-RPC 2.0)
-│   ├── scoring/            # Bottleneck Score (B_s) calculator
-│   ├── hardware_engine.py  # Arm64 pipeline simulator
-│   ├── interleaving_engine.py
-│   └── visualizer.py       # Before/after comparison charts
+│   ├── mcp_server/         # MCP Telemetry Bridge (JSON-RPC 2.0)
+│   └── scoring/            # Bottleneck Score (B_s) calculator
 ├── workloads/              # Example AI workloads (ai_inference, matmul, nlp)
 ├── tests/                  # pytest suite
 ├── scripts/                # run_workload.sh
@@ -244,6 +241,7 @@ ARMONIC-ARM/
 ├── pyproject.toml          # pip installable
 ├── Makefile                # one-command setup
 ├── Dockerfile              # Reproducible container runs
+├── LICENSE                 # MIT license
 ├── MIGRATION.md            # Onboarding guide
 ├── CONTRIBUTING.md         # Developer guidelines
 ├── CHANGELOG.md            # Release history
