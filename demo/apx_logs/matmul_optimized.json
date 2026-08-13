@@ -1,0 +1,23 @@
+{
+  "workload": "matmul",
+  "run_id": "optimized-20260806-143612",
+  "platform": {
+    "cpu": "ARM Neoverse V1",
+    "instance": "AWS EC2 c7g.xlarge",
+    "arch": "aarch64"
+  },
+  "apx_counters": {
+    "CPU_CYCLES": 312000000,
+    "INST_RETIRED": 198000000,
+    "L1D_CACHE_REFILL": 42000,
+    "BR_MIS_PRED": 1800,
+    "MEM_ACCESS": 145000000,
+    "MEM_STALL": 78000000
+  },
+  "wall_time_sec": 0.312,
+  "bottleneck_score": 312000,
+  "dominant_bottleneck": "memory_stall",
+  "sample_count": 23,
+  "patch_applied": "@njit(fastmath=True, cache=True) on matrix_multiply()",
+  "improvement_pct": 74.94
+}
