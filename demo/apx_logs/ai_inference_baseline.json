@@ -1,0 +1,22 @@
+{
+  "workload": "ai_inference",
+  "run_id": "baseline-20260806-142800",
+  "platform": {
+    "cpu": "ARM Neoverse V1",
+    "instance": "AWS EC2 c7g.xlarge",
+    "kernel": "6.2.0-1012-aws",
+    "arch": "aarch64"
+  },
+  "apx_counters": {
+    "CPU_CYCLES": 17628000,
+    "INST_RETIRED": 12450000,
+    "L1D_CACHE_REFILL": 4200,
+    "BR_MIS_PRED": 180,
+    "MEM_ACCESS": 8900000,
+    "MEM_STALL": 5300000
+  },
+  "wall_time_sec": 17.34,
+  "bottleneck_score": 17.63,
+  "dominant_bottleneck": "memory_stall",
+  "sample_count": 24
+}
