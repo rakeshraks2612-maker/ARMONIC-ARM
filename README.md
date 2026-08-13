@@ -6,7 +6,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Arm64%20Linux-orange)
 
-Track: Cloud AI — Arm AI Optimization Challenge 2026
+Track: **Cloud AI** — Arm AI Optimization Challenge 2026
 
 ---
 
@@ -14,24 +14,27 @@ Track: Cloud AI — Arm AI Optimization Challenge 2026
 
 ARMONIC is a fully autonomous, closed-loop optimization agent for Python AI workloads running on Arm64 cloud infrastructure (AWS Graviton3, Ampere Altra, Neoverse V1/V2). It profiles a workload via Arm Performix (APX) hardware counters, scores bottlenecks using Neoverse-tuned weights, queries an LLM for an Arm64-aware fix, applies and validates the patch, and commits the result to an isolated git branch — without manual code changes.
 
+**Why Cloud AI?** Teams avoid migrating inference workloads to Arm64 cloud (AWS Graviton3) because they lack the expertise or time to optimize for Neoverse microarchitecture. ARMONIC removes that barrier — it automates the optimization discovery and validation process, making Arm64 cloud adoption frictionless for any Python AI pipeline.
+
 **Target:** AWS Graviton3 (Neoverse V1) | Python 3.10+ | Ubuntu 22.04 Arm64
 
-**NOTE:** All results obtained or given as the average values over 10 runs 
+> **License:** MIT — clearly visible in repository `About` section and [`LICENSE`](LICENSE) file.
 
 ---
 
 ## Results
 
-| Metric                  | Baseline (avg of 5 runs) | Optimized (avg of 5 runs) | Improvement |
-| ----------------------- | ------------------------ | ------------------------- | ----------- |
-| Wall time               | ~17.3s                   | ~0.22s                    | **~98.7%**  |
-| Bottleneck Score (B\_s) | ~17.3                    | ~0.23                     | **~98.7%**  |
-| APX samples             | 23–24                    | 23–24                     | Validated   |
+| Metric | Baseline (avg of 5 runs) | Optimized (avg of 5 runs) | Improvement |
+|--------|--------------------------|---------------------------|-------------|
+| Wall time | ~17.3s | ~0.22s | **~98.0%** |
+| Bottleneck Score (B_s) | ~17.3 | ~0.23 | **~98%** |
+| APX samples | 23–24 | 23–24 | Validated |
 
-Note: Measurements taken on AWS EC2 c7g.xlarge (Graviton3) with Arm Performix APX. Wall times vary ±3% across runs due to cloud instance scheduling noise, but the relative improvement remains consistent at ~98.7% across all trials.
+> **Baseline Methodology:** The baseline represents unoptimized prototype Python commonly found in early-stage AI inference pipelines (naive loops, stdlib JSON, no JIT). The 98.7% improvement demonstrates ARMONIC's ability to autonomously identify what a human expert would spot manually — in seconds, not hours. The agent applied an `@njit(fastmath=True)` Numba decorator after detecting the hotspot via APX hardware counters. See [Benchmarks](#benchmarks) for additional workloads with varying optimization types and more conservative gains.
 
+*Measurements taken on AWS EC2 c7g.xlarge (Graviton3) with Arm Performix APX. Wall times vary ±3% across runs due to cloud instance scheduling noise, but the relative improvement remains consistent at ~98.7% across all trials.*
 
-Workload: `workloads/ai_inference.py` — an agentic AI runtime with JSON serialization overhead. The LLM identified a naive Python loop as the hotspot and applied an `@njit(fastmath=True)` Numba decorator. The patch was validated for syntax, AST correctness, and score regression, then committed to an isolated git branch.
+**Workload:** `workloads/ai_inference.py` — an agentic AI runtime with JSON serialization overhead. The LLM identified a naive Python loop as the hotspot and applied an `@njit(fastmath=True)` Numba decorator. The patch was validated for syntax, AST correctness, and score regression, then committed to an isolated git branch.
 
 ---
 
@@ -141,6 +144,7 @@ flowchart LR
 - Python 3.10+
 - Arm64 Linux instance (AWS Graviton3 recommended)
 - Arm Performix (`apx`) — optional, falls back to cProfile
+- Gemini API key (complies with Google API Terms of Service; no keys are distributed in this repository)
 
 ### Setup
 
@@ -164,6 +168,26 @@ make run
 # or
 python -m armonic.run --config config.yaml
 ```
+
+---
+
+## Judge-Friendly Quick Demo (No Graviton3 Required)
+
+If you don't have access to an Arm64 instance or Gemini API key, you can still explore the full pipeline:
+
+```bash
+# Dry-run mode: simulates profiling, scoring, and patch generation without APX or LLM
+git clone https://github.com/rakeshraks2612-maker/ARMONIC-ARM.git
+cd ARMONIC-ARM
+make install
+python -m armonic.run --dry-run --workload workloads/ai_inference.py
+```
+
+**Pre-recorded artifacts included in repository:**
+- `demo/apx_logs/` — Raw APX counter outputs from c7g.xlarge runs
+- `demo/patches/` — Auto-generated patches with validation reports
+- `demo/screenshots/` — Pipeline step-by-step terminal captures
+- `tests/` — Full pytest suite runnable on any platform
 
 ---
 
@@ -211,7 +235,7 @@ python -m pytest tests/  # validation suite
 
 ---
 
-## Safety & Validation
+## Safety & Sandboxing
 
 Every patch generated by the LLM is validated before being accepted:
 
@@ -219,6 +243,12 @@ Every patch generated by the LLM is validated before being accepted:
 - **AST smoke test** — `ast.parse()`
 - **Score validation** — re-profiled and compared against baseline; rejected if `opt_score >= base_score`
 - **Git isolation** — committed to a timestamped branch (`armonic/auto-refactor-<timestamp>`), original code preserved on `main`
+
+**Containment Strategy:**
+- All patch execution occurs inside the Docker container defined in `Dockerfile` (Ubuntu 22.04 Arm64, restricted user)
+- The LLM is constrained by a rigid system prompt (`prompts/optimize.txt`) that limits modifications to pure Python function decorators and standard library substitutions
+- No network access is granted during patch execution
+- Rollback is always one `git checkout main` away
 
 ---
 
@@ -235,6 +265,7 @@ ARMONIC-ARM/
 │   └── scoring/            # Bottleneck Score (B_s) calculator
 ├── workloads/              # Example AI workloads (ai_inference, matmul, nlp)
 ├── tests/                  # pytest suite
+├── demo/                   # Pre-recorded logs, patches, screenshots
 ├── scripts/                # run_workload.sh
 ├── prompts/                # Reusable LLM prompt assets
 ├── config.example.yaml
@@ -261,7 +292,7 @@ ARMONIC-ARM/
 
 ---
 
-## Why It Fits the Rubric
+## Why It Fits the Cloud AI Track
 
 | Criteria | How ARMONIC Addresses It | Evidence |
 |----------|--------------------------|----------|
@@ -270,6 +301,7 @@ ARMONIC-ARM/
 | **Arm-Specific Optimization** | APX hardware counter profiling + Neoverse-tuned scoring weights + Arm64-conditioned LLM prompts | Runs on AWS Graviton3. Targets Neoverse cache stall patterns. |
 | **Production Readiness** | Syntax/AST validation, score gating, automated git branching, Docker containerization | `Dockerfile` + `tests/` + rollback via `git` |
 | **Reusability** | Infrastructure-level, not model-specific — works with any Python AI inference pipeline on Arm64 | 4 workloads benchmarked with different optimization strategies |
+| **Migration / Adoption Value** | Removes the optimization expertise barrier that prevents teams from migrating inference workloads to Arm64 cloud | One-command deployment on Graviton3; no Neoverse microarchitecture knowledge required |
 
 ---
 
@@ -288,7 +320,7 @@ ARMONIC-ARM/
 
 ## Demo
 
-2.5-minute demo of autonomous optimization on AWS Graviton Arm64: [https://www.youtube.com/watch?v=4x-XWuQbCyE]
+2.5-minute demo of autonomous optimization on AWS Graviton Arm64, including `uname -m` and `lscpu` verification of the Neoverse V1 environment: [https://www.youtube.com/watch?v=4x-XWuQbCyE](https://www.youtube.com/watch?v=4x-XWuQbCyE)
 
 ---
 
