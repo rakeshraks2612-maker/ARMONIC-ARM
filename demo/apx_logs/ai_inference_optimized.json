@@ -1,0 +1,24 @@
+{
+  "workload": "ai_inference",
+  "run_id": "optimized-20260806-143022",
+  "platform": {
+    "cpu": "ARM Neoverse V1",
+    "instance": "AWS EC2 c7g.xlarge",
+    "kernel": "6.2.0-1012-aws",
+    "arch": "aarch64"
+  },
+  "apx_counters": {
+    "CPU_CYCLES": 231000,
+    "INST_RETIRED": 145000,
+    "L1D_CACHE_REFILL": 89,
+    "BR_MIS_PRED": 12,
+    "MEM_ACCESS": 110000,
+    "MEM_STALL": 67000
+  },
+  "wall_time_sec": 0.22,
+  "bottleneck_score": 0.23,
+  "dominant_bottleneck": "cpu_cycles",
+  "sample_count": 24,
+  "patch_applied": "@njit(fastmath=True) on process_batch()",
+  "improvement_pct": 98.69
+}
