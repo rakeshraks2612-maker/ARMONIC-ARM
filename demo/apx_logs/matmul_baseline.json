@@ -1,0 +1,21 @@
+{
+  "workload": "matmul",
+  "run_id": "baseline-20260806-143500",
+  "platform": {
+    "cpu": "ARM Neoverse V1",
+    "instance": "AWS EC2 c7g.xlarge",
+    "arch": "aarch64"
+  },
+  "apx_counters": {
+    "CPU_CYCLES": 1245000000,
+    "INST_RETIRED": 890000000,
+    "L1D_CACHE_REFILL": 156000,
+    "BR_MIS_PRED": 4200,
+    "MEM_ACCESS": 678000000,
+    "MEM_STALL": 312000000
+  },
+  "wall_time_sec": 1.245,
+  "bottleneck_score": 1245000,
+  "dominant_bottleneck": "memory_stall",
+  "sample_count": 23
+}
