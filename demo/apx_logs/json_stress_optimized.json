@@ -1,0 +1,23 @@
+{
+  "workload": "json_stress",
+  "run_id": "optimized-20260806-144115",
+  "platform": {
+    "cpu": "ARM Neoverse V1",
+    "instance": "AWS EC2 c7g.xlarge",
+    "arch": "aarch64"
+  },
+  "apx_counters": {
+    "CPU_CYCLES": 445000000,
+    "INST_RETIRED": 312000000,
+    "L1D_CACHE_REFILL": 34000,
+    "BR_MIS_PRED": 5600,
+    "MEM_ACCESS": 223000000,
+    "MEM_STALL": 112000000
+  },
+  "wall_time_sec": 0.445,
+  "bottleneck_score": 445000,
+  "dominant_bottleneck": "cpu_cycles",
+  "sample_count": 24,
+  "patch_applied": "Replaced stdlib json with orjson in serialize_results()",
+  "improvement_pct": 50.0
+}
