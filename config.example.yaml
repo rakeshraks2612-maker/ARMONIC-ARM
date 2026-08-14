@@ -9,7 +9,7 @@ w4_instructions: 0.10
 w5_power: 0.05
 llm:
 provider: "google"
-model: "gemini-2.0-flash"
+model: "gemini-3.6-flash"
 api_key: "YOUR_GEMINI_API_KEY_HERE"
 mcp_server:
 host: "http://127.0.0.1"
