@@ -1,32 +1,34 @@
 import numpy as np
 import time
-from numba import jit
+from numba import njit
 
-# Force Numba to compile straight to native machine code without python fallback
-@jit(nopython=True, fastmath=True)
-def heavy_computation_kernel(a, b):
-    res = np.dot(a, b)
-    # Optimized mathematical mapping
-    for i in range(res.shape[0]):
-        for j in range(res.shape[1]):
-            res[i, j] = np.sin(res[i, j]) + np.cos(res[i, j])
-    return res
+@njit(fastmath=True, cache=True)
+def process_batch(data):
+    """Naive Python loop — prime target for Numba JIT."""
+    results = np.empty(len(data), dtype=np.float64)
+    for i in range(len(data)):
+        x = data[i]
+        result = 0.0
+        for j in range(500):
+            result += np.sin(x + j) * np.cos(x - j)
+        results[i] = result
+    return results
 
 def run_workload():
-    size = 1500
     np.random.seed(42)
-    a = np.random.rand(size, size)
-    b = np.random.rand(size, size)
-    
-    # WARMUP CALL: Triggers JIT compilation BEFORE timing starts
-    _ = heavy_computation_kernel(a[:10, :10], b[:10, :10])
-    
-    start_time = time.time()
-    for _ in range(5):
-        res = heavy_computation_kernel(a, b)
-        
-    end_time = time.time()
-    print(f"Optimized Workload execution completed in {end_time - start_time:.4f} seconds.")
+    size = 8000
+    data = np.random.rand(size)
+    result = process_batch(data)
+    return result
+
+def run_test():
+    """Deterministic correctness check."""
+    import hashlib
+    np.random.seed(42)
+    data = np.random.rand(10)
+    result = process_batch(data)
+    result = np.round(result, decimals=10)
+    return hashlib.sha256(result.tobytes()).hexdigest()
 
 if __name__ == "__main__":
     run_workload()
