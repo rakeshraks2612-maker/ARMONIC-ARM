@@ -9,14 +9,14 @@ def process_batch(data):
     for i in range(len(data)):
         x = data[i]
         result = 0.0
-        for j in range(500):
+        for j in range(2000):
             result += np.sin(x + j) * np.cos(x - j)
         results[i] = result
     return results
 
 def run_workload():
     np.random.seed(42)
-    size = 8000
+    size = 25000
     data = np.random.rand(size)
     result = process_batch(data)
     return result
