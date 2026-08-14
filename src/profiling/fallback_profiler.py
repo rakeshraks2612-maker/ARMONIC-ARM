@@ -1,78 +1,84 @@
-"""
-ARMONIC-ARM: Cross-Platform Fallback Profiler.
-Uses Python's built-in cProfile when Arm Performix (APX) is unavailable
-or returns unresolved symbols.
-"""
+"""ARMONIC-ARM: Cross-platform fallback profiler (cProfile-based)."""
+
 import cProfile
-import pstats
+import importlib.util
 import io
-import time
-import json
+import numpy as np
 import os
+import pstats
+import sys
+import time
+
 
 def run_fallback_profiler(workload_path, timeout=300):
-    """
-    Profiles a Python workload using cProfile.
-    Explicitly calls run_workload() from the executed module.
-    """
-    print("[!] Using cross-platform fallback profiler (cProfile).")
+    """Profile workload using cProfile. Returns metrics dict."""
+    workload_dir = os.path.dirname(os.path.abspath(workload_path))
+    workload_name = os.path.splitext(os.path.basename(workload_path))[0]
+    
+    if workload_dir not in sys.path:
+        sys.path.insert(0, workload_dir)
+    
+    # Remove from cache if already imported
+    if workload_name in sys.modules:
+        del sys.modules[workload_name]
+    
+    spec = importlib.util.spec_from_file_location(workload_name, workload_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[workload_name] = module
+    spec.loader.exec_module(module)
+    
+    # WARM UP Numba cache before profiling
+    if hasattr(module, 'process_batch'):
+        print("[+] Pre-compiling Numba JIT (warm-up run)...")
+        _ = module.process_batch(np.zeros(1, dtype=np.float64))
+    
+    # Now profile
+    start = time.time()
+    pr = cProfile.Profile()
+    pr.enable()
+    
+    module.run_workload()
+    
+    pr.disable()
+    elapsed = time.time() - start
 
-    profiler = cProfile.Profile()
-    start_time = time.perf_counter()
+    # Parse stats
+    s = io.StringIO()
+    ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+    ps.print_stats(10)
+    stats_text = s.getvalue()
 
-    try:
-        profiler.enable()
-        exec_globals = {}
-        with open(workload_path, 'r') as f:
-            code = compile(f.read(), workload_path, 'exec')
-        exec(code, exec_globals)
+    # Extract top function
+    lines = stats_text.split('\n')
+    top_func = "unknown"
+    top_pct = 0.0
+    total_calls = 0
+    
+    for line in lines:
+        if 'function calls' in line:
+            parts = line.split()
+            for i, p in enumerate(parts):
+                if 'calls' in p:
+                    try:
+                        total_calls = int(parts[i-1].replace(',', ''))
+                    except:
+                        pass
+        if '/' in line and line.strip().startswith((' ')):
+            parts = line.split()
+            if len(parts) >= 6:
+                try:
+                    top_pct = float(parts[3])
+                    top_func = parts[5]
+                    break
+                except:
+                    continue
 
-        # CRITICAL: Explicitly call run_workload() if it exists
-        if 'run_workload' in exec_globals:
-            exec_globals['run_workload']()
-
-        profiler.disable()
-    except Exception as e:
-        raise RuntimeError(f"Workload failed during profiling: {e}")
-
-    elapsed = time.perf_counter() - start_time
-
-    stream = io.StringIO()
-    stats = pstats.Stats(profiler, stream=stream)
-    stats.strip_dirs()
-    stats.sort_stats('ncalls')
-
-    raw_stats = stats.stats
-    functions = []
-
-    for (file, line, func), (cc, nc, tt, ct, callers) in raw_stats.items():
-        if file == '~' or func == '':
-            continue
-        functions.append({
-            "symbol": f"{func}",
-            "image": os.path.basename(file) if file else "__main__",
-            "samples": nc,
-            "cumtime": ct,
-        })
-
-    functions.sort(key=lambda x: x["samples"], reverse=True)
-    top = functions[0] if functions else None
-    total_samples = sum(f["samples"] for f in functions)
-
-    metrics = {
-        "total_samples": total_samples,
-        "top_function": top["symbol"] if top else None,
-        "top_function_image": top["image"] if top else None,
-        "top_function_samples": top["samples"] if top else 0,
-        "top_function_pct": round(100 * top["samples"] / total_samples, 2)
-        if top and total_samples else 0.0,
-        "function_count": len(functions),
-        "functions": functions[:10],
-        "_profiler": "fallback_cprofile",
-        "_elapsed_sec": round(elapsed, 4),
-    }
-
-    print(f"[+] Fallback profiling complete: {total_samples} total calls, "
-          f"top function: {metrics['top_function']} "
-          f"({metrics['top_function_pct']}%)")
-    return metrics, f"fallback-{int(time.time())}"
+    return {
+        "wall_time": elapsed,
+        "top_function": top_func,
+        "top_function_pct": top_pct,
+        "total_samples": total_calls,
+        "total_calls": total_calls,
+        "functions": [],
+        "profiler": "cProfile"
+    }, None
