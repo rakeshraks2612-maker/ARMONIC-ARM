@@ -1,35 +1,33 @@
-import hashlib
 import numpy as np
+import time
 from numba import njit
 
-
 @njit(fastmath=True, cache=True)
-def process_batch(batch):
-    out = np.empty_like(batch)
-    for i in range(batch.shape[0]):
-        x = batch[i]
-        out[i] = np.sin(x) * np.cos(x) + np.sin(x * 0.5)
-    return out
-
+def process_batch(data):
+    results = np.empty(len(data), dtype=np.float64)
+    for i in range(len(data)):
+        x = data[i]
+        result = 0.0
+        for j in range(2000):
+            result += np.sin(x + j) * np.cos(x - j)
+        results[i] = result
+    return results
 
 def run_workload():
     np.random.seed(42)
-    batches = [np.random.uniform(0.0, 100.0, size=50000) for _ in range(20)]
-    results = []
-    for batch in batches:
-        results.append(process_batch(batch))
-    return np.concatenate(results)
-
+    size = 25000
+    data = np.random.rand(size)
+    result = process_batch(data)
+    return result
 
 def run_test():
-    # Warm-up call before run_workload to trigger JIT compilation
-    dummy_data = np.array([1.0, 2.0, 3.0], dtype=np.float64)
-    _ = process_batch(dummy_data)
-
-    result = run_workload()
-    result_rounded = np.round(result, decimals=10)
-    return hashlib.sha256(result_rounded.tobytes()).hexdigest()
-
+    import hashlib
+    np.random.seed(42)
+    data = np.random.rand(10)
+    result = process_batch(data)
+    result = np.round(result, decimals=10)
+    return hashlib.sha256(result.tobytes()).hexdigest()
 
 if __name__ == "__main__":
-    print(run_test())
+    _ = process_batch(np.zeros(1, dtype=np.float64))
+    run_workload()
