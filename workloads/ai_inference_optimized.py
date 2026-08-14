@@ -1,44 +1,45 @@
 import hashlib
 import numpy as np
-from numba import njit
+import numba
 
 
-@njit(fastmath=True, cache=True)
-def process_batch(data: np.ndarray) -> np.ndarray:
-    """Optimized batch processing using Numba JIT compilation for Arm64."""
-    out = np.empty_like(data)
-    for i in range(data.shape[0]):
-        for j in range(data.shape[1]):
-            val = data[i, j]
-            out[i, j] = np.sin(val) * np.cos(val) + np.sqrt(np.abs(val) + 1.0)
-    return out
+def _verbose_message(msg, verbose=False):
+    if verbose:
+        print(msg)
 
 
-def run_workload() -> np.ndarray:
+@numba.njit(fastmath=True, cache=True)
+def process_batch(batch):
+    n = len(batch)
+    result = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        x = batch[i]
+        result[i] = np.sin(x) * np.cos(x)
+    return result
+
+
+def run_workload(data, batch_size=10000, verbose=False):
+    num_batches = (len(data) + batch_size - 1) // batch_size
+    results = []
+    for i in range(num_batches):
+        batch = data[i * batch_size : (i + 1) * batch_size]
+        _verbose_message(f"Processing batch {i}/{num_batches}", verbose=verbose)
+        res = process_batch(batch)
+        results.append(res)
+    return np.concatenate(results)
+
+
+def run_test():
     np.random.seed(42)
-    batches = [
-        np.random.randn(1000, 1000).astype(np.float64) for _ in range(10)
-    ]
-    accumulated = np.zeros((1000, 1000), dtype=np.float64)
+    data = np.random.uniform(0.0, 100.0, size=100000)
 
-    for batch in batches:
-        accumulated += process_batch(batch)
-
-    return accumulated
-
-
-def run_test() -> str:
-    # Warm-up call to trigger JIT compilation before running the workload
-    warmup_data = np.zeros((10, 10), dtype=np.float64)
+    # Warm-up Numba JIT compilation before running workload
+    warmup_data = np.array([1.0, 2.0, 3.0], dtype=np.float64)
     _ = process_batch(warmup_data)
 
-    result = run_workload()
+    result = run_workload(data)
 
-    # Exact hash calculation with rounding precision rule
     rounded_result = np.round(result, decimals=10)
-    result_hash = hashlib.sha256(rounded_result.tobytes()).hexdigest()
-    return result_hash
-
-
-if __name__ == "__main__":
-    print(run_test())
+    hasher = hashlib.sha256()
+    hasher.update(rounded_result.tobytes())
+    return hasher.hexdigest()
