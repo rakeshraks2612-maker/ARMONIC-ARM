@@ -2,7 +2,6 @@ import numpy as np
 import time
 
 def process_batch(data):
-    """Naive Python loop — prime target for Numba JIT."""
     results = np.empty(len(data), dtype=np.float64)
     for i in range(len(data)):
         x = data[i]
@@ -20,7 +19,6 @@ def run_workload():
     return result
 
 def run_test():
-    """Deterministic correctness check."""
     import hashlib
     np.random.seed(42)
     data = np.random.rand(10)

@@ -29,3 +29,6 @@ results/
 
 # Config (contains API keys)
 config.yaml
+*.pyc
+*.prof
+workloads/*_optimized.py

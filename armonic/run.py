@@ -124,7 +124,7 @@ def run_armonic_pipeline(config_path):
     print("--- PHASE 1: BASELINE PROFILING ---")
     print(sep)
     
-    baseline_telemetry = profile_workload(workload_path)
+    baseline_telemetry = profile_workload(workload_path, warmup=False)
     baseline_samples = baseline_telemetry.get("total_samples", 0)
     baseline_wall = baseline_telemetry.get("wall_time", 0)
     baseline_bs = baseline_telemetry.get("bottleneck_score", 0)
@@ -184,7 +184,7 @@ def run_armonic_pipeline(config_path):
     print("[+] APX detected. Using Arm Performix for profiling.")
     print("[+] Pre-compiling Numba JIT (warm-up run)...")
     
-    opt_telemetry = profile_workload(optimized_path)
+    opt_telemetry = profile_workload(optimized_path, warmup=True)
     opt_samples = opt_telemetry.get("total_samples", 0)
     opt_wall = opt_telemetry.get("wall_time", 0)
     opt_bs = opt_telemetry.get("bottleneck_score", 0)
