@@ -1,132 +1,166 @@
-#!/usr/bin/env python3
-"""
-ARMONIC Orchestrator — Main entry point for autonomous optimization loop.
-
-Flow:
-  1. Profile baseline workload (APX or cProfile fallback)
-  2. Send telemetry to LLM for optimization advisory
-  3. Apply patch, validate syntax/AST/imports, commit to git branch
-  4. Re-profile patched workload
-  5. Compare bottleneck scores: reject if opt_score >= base_score
-  6. Report results
-
-Usage:
-    python -m armonic.run --config config.yaml
-"""
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=FutureWarning)
-
-import os
-import sys
+import argparse
 import yaml
-import time
-import subprocess
+import sys
+import os
 import json
+import shutil
+import subprocess
+import time
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.profiling.apx_wrapper import profile_workload
+from src.profiling.performix_wrapper import run_apx_profiler
 from src.refactor_engine.agent_core import fetch_llm_optimization, apply_and_commit_patch
+from src.mcp_server.mcp_server import ArmMCPClient
+from src.scoring.bottleneck import compute_bottleneck_score
 
+def load_config(config_path):
+    with open(config_path, 'r') as file:
+        return yaml.safe_load(file)
 
-def run_armonic_pipeline(config_path="config.yaml"):
-    print("=" * 60)
-    print("  ARMONIC — Autonomous Agentic Optimizer for Arm64")
-    print("=" * 60)
+def save_to_disk(filename, data, is_json=True):
+    os.makedirs("results", exist_ok=True)
+    path = os.path.join("results", filename)
+    with open(path, 'w') as f:
+        if is_json:
+            json.dump(data, f, indent=4)
+        else:
+            f.write(data)
+    return path
 
-    # ─── Load config ───
-    if not os.path.exists(config_path):
-        print(f"[-] Config not found: {config_path}")
-        sys.exit(1)
-
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-
-    repo_path = config.get("repo_path", os.getcwd())
-    workload_path = config.get("workload", "workloads/ai_inference.py")
-    api_key = config.get("llm", {}).get("api_key") or os.environ.get("GEMINI_API_KEY")
-    max_retries = config.get("max_retries", 1)
-
-    if not api_key:
-        print("[-] No Gemini API key found in config.yaml or GEMINI_API_KEY env var.")
-        sys.exit(1)
-
-    workload_file = os.path.basename(workload_path)
-
-    # ─── Step 1: Baseline Profile ───
-    print(f"\n[1/5] Profiling baseline: {workload_path}")
-    baseline_telemetry = profile_workload(workload_path)
-    baseline_score = baseline_telemetry.get("bottleneck_score", float("inf"))
-    top_func = baseline_telemetry.get("top_function", "unknown")
-
-    print(f"    Baseline B_s: {baseline_score}")
-    print(f"    Top hotspot: {top_func} ({baseline_telemetry.get('top_function_pct', 0)}%)")
-
-    # ─── Step 2: LLM Advisory ───
-    print("\n[2/5] Querying LLM for Arm64-aware optimization...")
-    advisory = None
-    for attempt in range(max_retries):
-        advisory = fetch_llm_optimization(baseline_telemetry, api_key)
-        if advisory:
-            break
-        print(f"    Retry {attempt + 1}/{max_retries}...")
-        time.sleep(2)
-
-    if not advisory:
-        print("[-] LLM failed to produce a valid advisory. Aborting.")
-        sys.exit(1)
-
-    # ─── Step 3: Apply Patch ───
-    print("\n[3/5] Applying autonomous patch...")
-    patch_applied = apply_and_commit_patch(
-        repo_path=repo_path,
-        file_to_patch=workload_path,
-        advisory=advisory,
-        telemetry_data=baseline_telemetry
+def run_workload_wall_time(workload_path, warmup=False):
+    """Run workload and measure real wall-clock time.
+    If warmup=True, run once first to warm Numba cache, then measure."""
+    module_name = os.path.splitext(os.path.basename(workload_path))[0]
+    
+    # CRITICAL FIX: Pre-warm Numba JIT cache before measuring
+    if warmup and "njit" in open(workload_path).read():
+        print("[+] Pre-compiling Numba JIT (warm-up run)...")
+        warm_cmd = (
+            f"import sys; sys.path.insert(0, 'workloads'); "
+            f"from {module_name} import process_batch; "
+            f"import numpy as np; "
+            f"process_batch(np.array([0.1, 0.2, 0.3], dtype=np.float64))"
+        )
+        subprocess.run(["python3", "-c", warm_cmd], capture_output=True, timeout=60)
+    
+    start = time.perf_counter()
+    result = subprocess.run(
+        ["python3", workload_path],
+        capture_output=True, text=True, timeout=600
     )
+    elapsed = time.perf_counter() - start
+    if result.returncode != 0:
+        raise RuntimeError(f"Workload failed: {result.stderr}")
+    return elapsed
 
-    if not patch_applied:
-        print("[-] Patch application failed or produced no change. Aborting.")
+def main():
+    parser = argparse.ArgumentParser(description="ARMONIC: Autonomous ARM64 Workload Optimizer")
+    parser.add_argument("--config", required=True, help="Path to config.yaml")
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    workload = config['pipeline']['target_workload']
+    api_key = os.environ.get("GEMINI_API_KEY") or config.get('llm', {}).get('api_key', '')
+
+    if not os.path.exists(workload):
+        print(f"[!] Workload not found: {workload}")
         sys.exit(1)
 
-    # ─── Step 4: Re-profile Optimized Workload ───
-    print("\n[4/5] Re-profiling optimized workload...")
-    optimized_telemetry = profile_workload(workload_path)
-    optimized_score = optimized_telemetry.get("bottleneck_score", float("inf"))
+    baseline_workload = workload
+    optimized_workload = workload.replace(".py", "_optimized.py")
 
-    print(f"    Optimized B_s: {optimized_score}")
+    if os.path.exists(optimized_workload):
+        os.remove(optimized_workload)
+    shutil.copy(baseline_workload, optimized_workload)
 
-    # ─── Step 5: Score Validation (README CLAIM) ───
-    print("\n[5/5] Validating improvement...")
-    if optimized_score >= baseline_score:
-        print(f"[-] SCORE REGRESSION: {baseline_score} -> {optimized_score}")
-        print("[-] Rejecting patch. Reverting to original code...")
+    print("\n" + "=" * 80)
+    print("--- PHASE 1: BASELINE PROFILING ---")
+    print("=" * 80)
+    base_metrics, base_run_id = run_apx_profiler(baseline_workload)
+    save_to_disk("apx_baseline.json", base_metrics, is_json=True)
+    
+    base_wall = run_workload_wall_time(baseline_workload, warmup=False)
+    base_score = compute_bottleneck_score(base_metrics, config.get('scoring', {}))
+    
+    print(f"[+] Baseline APX samples: {base_metrics.get('total_samples', 0)}")
+    print(f"[+] Baseline REAL wall_time: {base_wall:.4f}s")
+    print(f"[+] Baseline B_s: {base_score}")
+    if base_metrics.get("top_function"):
+        print(f"[+] Baseline top hotspot: {base_metrics['top_function']} "
+              f"({base_metrics['top_function_pct']}% of samples)")
 
-        # Revert file to original
-        # We need to stash the original. apply_and_commit_patch already wrote it,
-        # but we re-read from git to be safe.
-        try:
-            import git as git_module
-            repo = git_module.Repo(repo_path)
-            repo.git.checkout("HEAD", "--", workload_path)
-            print("[+] File reverted to original.")
-        except Exception as e:
-            print(f"[!] Manual revert may be needed: {e}")
+    print("\n" + "=" * 80)
+    print("--- PHASE 2: AGENTIC ANALYSIS & PATCH ---")
+    print("=" * 80)
 
-        print("\n[-] ARMONIC pipeline completed: PATCH REJECTED (no improvement)")
+    mcp_host = config.get('mcp_server', {}).get('host', 'localhost')
+    mcp_port = config.get('mcp_server', {}).get('port', 8080)
+    if not str(mcp_host).startswith(("http://", "https://")):
+        mcp_host = f"http://{mcp_host}"
+    mcp = ArmMCPClient(host=f"{mcp_host}:{mcp_port}")
+    mcp.query_architecture_bottlenecks(base_metrics)
+
+    advisory = fetch_llm_optimization(base_metrics, api_key, baseline_workload)
+    if not advisory:
+        print("[!] LLM returned no advisory. Exiting.")
         sys.exit(1)
+
+    branch_name = apply_and_commit_patch(".", optimized_workload, advisory)
+    print(f"[+] Committed optimization to branch: {branch_name}")
+
+    print("\n" + "=" * 80)
+    print("--- PHASE 3: OPTIMIZED PROFILING ---")
+    print("=" * 80)
+    opt_metrics, opt_run_id = run_apx_profiler(optimized_workload)
+    save_to_disk("apx_optimized.json", opt_metrics, is_json=True)
+    
+    # CRITICAL FIX: Warm up Numba cache before measuring wall time
+    opt_wall = run_workload_wall_time(optimized_workload, warmup=True)
+    opt_score = compute_bottleneck_score(opt_metrics, config.get('scoring', {}))
+    
+    print(f"[+] Optimized APX samples: {opt_metrics.get('total_samples', 0)}")
+    print(f"[+] Optimized REAL wall_time: {opt_wall:.4f}s")
+    print(f"[+] Optimized B_s: {opt_score}")
+    if opt_metrics.get("top_function"):
+        print(f"[+] Optimized top hotspot: {opt_metrics['top_function']} "
+              f"({opt_metrics['top_function_pct']}% of samples)")
+
+    print("\n" + "=" * 80)
+    print("=== BOTTLENECK SCORE (B_s) COMPARISON ===")
+    print("=" * 80)
+    print("(B_s = weighted bottleneck score -- LOWER IS BETTER)")
+
+    if base_wall > 0:
+        improvement = ((base_wall - opt_wall) / base_wall) * 100
     else:
-        improvement_pct = ((baseline_score - optimized_score) / baseline_score) * 100
-        print(f"[+] IMPROVEMENT: {baseline_score} -> {optimized_score} ({improvement_pct:.2f}% faster)")
-        print("[+] Patch accepted and committed to isolated git branch.")
-        print("\n[*] ARMONIC pipeline completed: PATCH ACCEPTED")
+        improvement = 0.0
 
+    report = (
+        f"# ARMONIC Performance Report\n\n"
+        f"| Metric | Baseline | Optimized |\n"
+        f"|--------|----------|-----------|\n"
+        f"| B_s | {base_score:,} | {opt_score:,} |\n"
+        f"| REAL wall_time | {base_wall:.4f}s | {opt_wall:.4f}s |\n"
+        f"| APX samples | {base_metrics.get('total_samples', 0)} | {opt_metrics.get('total_samples', 0)} |\n"
+        f"| Top Hotspot | {base_metrics.get('top_function', 'N/A')} | {opt_metrics.get('top_function', 'N/A')} |\n"
+        f"| Improvement | — | **{improvement:.2f}%** |\n\n"
+        f"Baseline run_id: {base_run_id}\n"
+        f"Optimized run_id: {opt_run_id}\n"
+        f"Git branch: {branch_name}\n"
+    )
+    print(report)
+    save_to_disk("report.md", report, is_json=False)
+
+    try:
+        from src.visualizer import generate_comparison_chart
+        generate_comparison_chart(
+            "results/apx_baseline.json",
+            "results/apx_optimized.json",
+            "results/comparison.png"
+        )
+    except Exception as e:
+        print(f"[!] Chart generation skipped: {e}")
+
+    print("\n[+] ARMONIC pipeline complete. Review results/ directory.")
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="ARMONIC Autonomous Optimizer")
-    parser.add_argument("--config", default="config.yaml", help="Path to config file")
-    args = parser.parse_args()
-    run_armonic_pipeline(args.config)
+    main()

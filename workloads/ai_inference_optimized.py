@@ -1,8 +1,6 @@
 import numpy as np
 import time
-from numba import njit
 
-@njit(fastmath=True, cache=True)
 def process_batch(data):
     """Naive Python loop — prime target for Numba JIT."""
     results = np.empty(len(data), dtype=np.float64)
