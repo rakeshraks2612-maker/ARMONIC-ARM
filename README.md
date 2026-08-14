@@ -358,4 +358,4 @@ ARMONIC-ARM/
 
 ## License
 
-MIT — see LICENSE
+MIT — see [LICENSE](LICENSE)
